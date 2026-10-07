@@ -1,0 +1,33 @@
+mode: development
+timezone: Africa/Nairobi
+data_dir: data
+artifacts_dir: artifacts
+state_dir: state
+logs_dir: logs
+database_path: data/warehouse/sports.duckdb
+raw_retention_days: null
+http:
+  timeout_seconds: 30.0
+  retry_count: 3
+  backoff_base_seconds: 0.5
+  max_concurrency: 1
+quota:
+  minimum_daily_reserve: 10
+  minimum_minute_reserve: 2
+features:
+  windows: [3, 5, 10]
+  exponential_half_life: 5.0
+  prediction_lead_hours: 24
+models:
+  random_seed: 20261007
+  cpu_threads: 2
+  time_decay_half_life_days: 365.0
+backfill:
+  maximum_requests_per_run: 40
+  repair_attempt_limit: 3
+odds:
+  target_days_ahead: 1
+  snapshot_dedupe_seconds: 60
+provider_access:
+  replay_season: 2024
+

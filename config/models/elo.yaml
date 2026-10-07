@@ -1,0 +1,4 @@
+k_factor: 20.0
+home_advantage: 60.0
+initial_rating: 1500.0
+draw_probability: 0.25

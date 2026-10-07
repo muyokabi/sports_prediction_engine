@@ -1,0 +1,66 @@
+[project]
+name = "sports-prediction-engine"
+version = "0.1.0"
+description = "Point-in-time football data, analytics, and prediction engine"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "catboost>=1.2.8",
+  "duckdb>=1.4.0",
+  "httpx>=0.28.1",
+  "lightgbm>=4.6.0",
+  "numpy>=2.0.0",
+  "optuna>=4.5.0",
+  "polars>=1.34.0",
+  "pyarrow>=21.0.0",
+  "pydantic>=2.11.0",
+  "pydantic-settings>=2.10.0",
+  "pytz>=2026.1",
+  "pyyaml>=6.0.2",
+  "rich>=14.1.0",
+  "scikit-learn>=1.7.0",
+  "scipy>=1.16.0",
+  "typer>=0.19.0",
+]
+
+[project.scripts]
+sports-engine = "sports_engine.cli.main:app"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.18.0",
+  "pytest>=8.4.0",
+  "pytest-cov>=7.0.0",
+  "pytest-httpx>=0.35.0",
+  "ruff>=0.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sports_engine"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = ["live: tests that consume live provider quota"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = false
+packages = ["sports_engine"]
+
+[[tool.mypy.overrides]]
+module = ["yaml", "scipy.*", "sklearn.*", "catboost.*", "lightgbm.*"]
+ignore_missing_imports = true
+

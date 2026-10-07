@@ -1,0 +1,5 @@
+n_estimators: 300
+num_leaves: 31
+learning_rate: 0.05
+verbosity: -1
+

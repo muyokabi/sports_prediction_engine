@@ -1,0 +1,1 @@
+"""Validated football domain records."""

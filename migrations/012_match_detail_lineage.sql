@@ -1,0 +1,9 @@
+ALTER TABLE fixture_events ADD COLUMN source_raw_path VARCHAR;
+ALTER TABLE fixture_events ADD COLUMN retrieved_at TIMESTAMPTZ;
+ALTER TABLE lineups ADD COLUMN source_raw_path VARCHAR;
+ALTER TABLE lineups ADD COLUMN retrieved_at TIMESTAMPTZ;
+ALTER TABLE team_match_statistics ADD COLUMN source_raw_path VARCHAR;
+ALTER TABLE team_match_statistics ADD COLUMN retrieved_at TIMESTAMPTZ;
+ALTER TABLE player_match_statistics ADD COLUMN source_raw_path VARCHAR;
+ALTER TABLE player_match_statistics ADD COLUMN retrieved_at TIMESTAMPTZ;
+ALTER TABLE fixture_completeness ADD COLUMN source_raw_path VARCHAR;

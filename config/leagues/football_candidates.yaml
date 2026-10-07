@@ -1,0 +1,12 @@
+candidates:
+  - {provider_id: 39, name: Premier League, country: England, priority: 1}
+  - {provider_id: 140, name: La Liga, country: Spain, priority: 2}
+  - {provider_id: 135, name: Serie A, country: Italy, priority: 3}
+  - {provider_id: 78, name: Bundesliga, country: Germany, priority: 4}
+  - {provider_id: 61, name: Ligue 1, country: France, priority: 5}
+  - {provider_id: 94, name: Primeira Liga, country: Portugal, priority: 6}
+  - {provider_id: 88, name: Eredivisie, country: Netherlands, priority: 7}
+  - {provider_id: 144, name: Jupiler Pro League, country: Belgium, priority: 8}
+  - {provider_id: 203, name: Super Lig, country: Turkiye, priority: 9}
+  - {provider_id: 179, name: Premiership, country: Scotland, priority: 10}
+

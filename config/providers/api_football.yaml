@@ -1,0 +1,7 @@
+name: api_football
+base_url: https://v3.football.api-sports.io
+api_key_environment_variable: API_FOOTBALL_KEY
+api_key_header: x-apisports-key
+fixture_batch_size: 20
+safe_retry_statuses: [408, 425, 429, 500, 502, 503, 504]
+

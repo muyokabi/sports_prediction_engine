@@ -1,0 +1,1 @@
+"""Persistent provider quota allocation."""

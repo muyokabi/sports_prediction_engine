@@ -1,0 +1,14 @@
+windows: [3, 5, 10]
+minimum_prior_matches: 3
+families:
+  - form
+  - goals
+  - shots
+  - set_pieces
+  - possession
+  - passing
+  - discipline
+  - ratings
+  - schedule
+  - market
+

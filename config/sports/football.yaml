@@ -1,0 +1,11 @@
+sport: football
+final_statuses: [FT, AET, PEN]
+non_final_terminal_statuses: [CANC, ABD, AWD, WO]
+interrupted_statuses: [PST, SUSP, INT]
+required_coverage:
+  events: true
+  lineups: true
+  statistics_fixtures: true
+  statistics_players: true
+  odds: true
+
