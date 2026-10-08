@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from sports_engine.core.enums import Priority
+from sports_engine.markets.odds_age_research import refresh_odds_age_research
 from sports_engine.sports.football.ingestion.odds import OddsIngestionService
 from sports_engine.sports.football.normalization.fixtures import normalize_fixture
 from sports_engine.sports.football.normalization.odds import normalize_odds
@@ -47,6 +48,8 @@ def _odds(provider_fixture_id: int) -> dict[str, Any]:
                         "values": [
                             {"value": "Over 2.5", "odd": "1.90"},
                             {"value": "Under 2.5", "odd": "2.00"},
+                            {"value": "Over 3.5", "odd": "2.80"},
+                            {"value": "Under 3.5", "odd": "1.45"},
                         ],
                     },
                     {
@@ -85,6 +88,8 @@ def test_odds_snapshot_preserves_lines_probabilities_and_deduplicates(tmp_path: 
     assert [(price.selection_name, price.line) for price in prices] == [
         ("Over", "2.5"),
         ("Under", "2.5"),
+        ("Over", "3.5"),
+        ("Under", "3.5"),
         ("Home", "-1.0"),
         ("Away", "+1.0"),
     ]
@@ -109,8 +114,14 @@ def test_odds_snapshot_preserves_lines_probabilities_and_deduplicates(tmp_path: 
         "FROM odds_prices p JOIN bet_selections s USING (selection_id) "
         "ORDER BY s.line, p.decimal_odds"
     ).fetchall()
-    assert len(rows) == 4
+    assert len(rows) == 6
     assert all(row[1] > 0 and row[2] > 0 and row[3] > 1 for row in rows)
+    fair_by_line = connection.execute(
+        "SELECT s.line, sum(p.fair_probability) FROM odds_prices p "
+        "JOIN bet_selections s USING (selection_id) JOIN bet_markets m ON m.market_id=p.market_id "
+        "WHERE m.name='Goals Over/Under' GROUP BY s.line ORDER BY s.line"
+    ).fetchall()
+    assert fair_by_line == [("2.5", pytest.approx(1.0)), ("3.5", pytest.approx(1.0))]
     connection.close()
 
 
@@ -120,7 +131,7 @@ def test_invalid_provider_prices_are_excluded_without_losing_valid_selections() 
         [{"value": "Invalid", "odd": "0"}, {"value": "Malformed", "odd": "n/a"}]
     )
     prices = normalize_odds(payload)
-    assert len(prices) == 4
+    assert len(prices) == 6
     assert all(price.decimal_odds > 1 for price in prices)
 
 
@@ -179,4 +190,38 @@ def test_odds_service_restarts_safely_after_page_interruption(tmp_path: Path) ->
     ).run(date(2026, 10, 8))
     assert result.payloads_seen == 2
     assert connection.execute("SELECT count(*) FROM odds_snapshots").fetchone() == (2,)
+    connection.close()
+
+
+def test_odds_age_research_is_persisted_without_activating_penalty(tmp_path: Path) -> None:
+    connection = _database(tmp_path)
+    first_payload = _odds(100)
+    first_payload["update"] = "2026-10-07T08:00:00+00:00"
+    second_payload = _odds(100)
+    second_payload["update"] = "2026-10-07T10:00:00+00:00"
+    second_payload["bookmakers"][0]["bets"][0]["values"][0]["odd"] = "2.10"
+    assert store_odds_snapshot(
+        connection,
+        normalize_odds(first_payload),
+        source_raw_path="first.json.gz",
+        job_run_id=None,
+        observed_at=datetime(2026, 10, 7, 8, tzinfo=UTC),
+    )
+    assert store_odds_snapshot(
+        connection,
+        normalize_odds(second_payload),
+        source_raw_path="second.json.gz",
+        job_run_id=None,
+        observed_at=datetime(2026, 10, 7, 10, tzinfo=UTC),
+    )
+    completed = _fixture(100)
+    completed["fixture"]["status"] = {"short": "FT", "long": "Match Finished", "elapsed": 90}
+    completed["goals"] = {"home": 2, "away": 1}
+    season_id = connection.execute("SELECT competition_season_id FROM competition_seasons LIMIT 1").fetchone()[0]
+    upsert_fixture(connection, normalize_fixture(completed), season_id, "completed.json.gz")
+    result = refresh_odds_age_research(connection, minimum_scope_sample=1)
+    assert result.observations > 0 and result.scopes_written > 0
+    assert connection.execute(
+        "SELECT count(*), bool_or(production_penalty_qualified) FROM odds_age_research_results"
+    ).fetchone() == (result.scopes_written, False)
     connection.close()

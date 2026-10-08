@@ -31,7 +31,7 @@ backfill:
 odds:
   target_days_ahead: 1
   snapshot_dedupe_seconds: 60
-  maximum_age_minutes: 180
+  aged_reference_minutes: 180
 risk:
   maximum_bankroll_fraction_per_wager: 0.01
   maximum_daily_exposure: 0.05

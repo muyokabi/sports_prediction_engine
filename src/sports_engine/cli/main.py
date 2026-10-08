@@ -45,6 +45,7 @@ def run_analysis(
     from sports_engine.cli.runtime import open_database, provider_client
     from sports_engine.core.config import ApplicationMode, load_config
     from sports_engine.core.telemetry import JobSummary
+    from sports_engine.markets.odds_age_research import refresh_odds_age_research
     from sports_engine.orchestration.locks import FileLock
     from sports_engine.orchestration.runner import job_run
     from sports_engine.sports.football.ingestion.odds import OddsIngestionService
@@ -84,7 +85,14 @@ def run_analysis(
                 summary.odds_snapshots_written = odds_snapshots
             settlement = settle_completed_predictions(connection)
             refresh_performance_rollups(connection)
-            result = AnalysisService(connection, config.artifacts_dir / "reports").run(
+            refresh_odds_age_research(connection)
+            result = AnalysisService(
+                connection,
+                config.artifacts_dir / "reports",
+                aged_reference_minutes=config.odds.aged_reference_minutes,
+                minimum_probability_advantage=config.risk.minimum_probability_advantage,
+                required_robust_ev=config.risk.minimum_expected_value,
+            ).run(
                 requested.start,
                 requested.end,
                 timezone=config.timezone,

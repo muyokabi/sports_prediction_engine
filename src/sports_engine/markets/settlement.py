@@ -63,6 +63,32 @@ class SettlementDistribution:
         return 1 + (self.loss_exposure + minimum_expected_return) / self.win_exposure
 
 
+@dataclass(frozen=True, slots=True)
+class ManualPriceCheck:
+    passes: bool
+    actual_decimal_odds: float
+    minimum_acceptable_odds: float
+    expected_return: float
+
+
+def check_manual_price(
+    distribution: SettlementDistribution,
+    actual_decimal_odds: float,
+    *,
+    required_expected_return: float,
+) -> ManualPriceCheck:
+    minimum = distribution.minimum_odds(required_expected_return)
+    if minimum is None:
+        raise ValueError("A price target is undefined when there is no win exposure")
+    expected_return = distribution.expected_return(actual_decimal_odds)
+    return ManualPriceCheck(
+        actual_decimal_odds + 1e-12 >= minimum,
+        actual_decimal_odds,
+        minimum,
+        expected_return,
+    )
+
+
 def asian_handicap(
     distribution: ScoreDistribution,
     line: float,

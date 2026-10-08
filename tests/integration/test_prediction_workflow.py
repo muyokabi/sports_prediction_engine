@@ -241,5 +241,12 @@ def test_analysis_persists_qualified_fundamental_core_prices(tmp_path: Path) -> 
         [result.analysis_run_id],
     ).fetchone()[0]
     assert match_total == pytest.approx(1.0)
-    assert "Seven core fundamental prices persisted" in result.report_path.read_text(encoding="utf-8")
+    assert connection.execute(
+        "SELECT count(*), min(decision) FROM institutional_opportunities o "
+        "JOIN institutional_predictions i USING (prediction_id) WHERE i.analysis_run_id=?",
+        [result.analysis_run_id],
+    ).fetchone() == (7, "PRICE_TARGET")
+    document = result.report_path.read_text(encoding="utf-8")
+    assert "MANUAL PRICE CONFIRMATION REQUIRED" in document
+    assert "PRICE_TARGET" in document
     connection.close()

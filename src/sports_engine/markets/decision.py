@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -14,7 +14,9 @@ class NoBetReason(StrEnum):
     MODEL_NOT_CALIBRATED = "MODEL_NOT_CALIBRATED"
     NO_CHAMPION_MODEL = "NO_CHAMPION_MODEL"
     MISSING_ODDS = "MISSING_ODDS"
-    NO_ACTION_STALE_ODDS = "NO_ACTION_STALE_ODDS"
+    INVALID_REFERENCE_ODDS = "INVALID_REFERENCE_ODDS"
+    POST_KICKOFF_REFERENCE = "POST_KICKOFF_REFERENCE"
+    FIXTURE_ALREADY_STARTED = "FIXTURE_ALREADY_STARTED"
     INCOMPLETE_FIXTURE_DATA = "INCOMPLETE_FIXTURE_DATA"
     MARKET_UNAVAILABLE = "MARKET_UNAVAILABLE"
     INSUFFICIENT_PROBABILITY_ADVANTAGE = "INSUFFICIENT_PROBABILITY_ADVANTAGE"
@@ -52,6 +54,8 @@ class MarketQuote:
     fair_probability: float
     decimal_odds: float
     observed_at: datetime
+    bookmaker: str | None = None
+    provider_updated_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +65,15 @@ class BettingDecision:
     selected_market: str | None = None
     model_probability: float | None = None
     market_fair_probability: float | None = None
-    offered_decimal_odds: float | None = None
+    reference_decimal_odds: float | None = None
     raw_implied_probability: float | None = None
-    expected_value: float | None = None
+    reference_expected_value: float | None = None
     minimum_acceptable_odds: float | None = None
     odds_observed_at: datetime | None = None
     stake_fraction: float | None = None
+    reference_state: str | None = None
+    execution_edge: float | None = None
+    manual_price_confirmation_required: bool = True
 
 
 def decide_wager(
@@ -74,7 +81,7 @@ def decide_wager(
     quotes: list[MarketQuote],
     *,
     decision_time: datetime,
-    maximum_odds_age: timedelta,
+    fixture_kickoff: datetime | None = None,
     model_metrics: dict[str, object],
     calibrated: bool,
     home_history: int,
@@ -89,6 +96,12 @@ def decide_wager(
         return int(value) if isinstance(value, (int, float, str)) else 0
 
     reasons: list[str] = []
+    if fixture_kickoff is not None and decision_time >= fixture_kickoff:
+        return BettingDecision(
+            "NO_BET",
+            (NoBetReason.FIXTURE_ALREADY_STARTED,),
+            manual_price_confirmation_required=True,
+        )
     evidence_state = model_metrics.get("evidence_state")
     if evidence_state is not None:
         if str(evidence_state) != "PRODUCTION_ACTIONABLE":
@@ -114,23 +127,35 @@ def decide_wager(
         reasons.append(NoBetReason.MODEL_NOT_CALIBRATED)
     if max(probabilities.values()) < evidence.minimum_prediction_confidence:
         reasons.append(NoBetReason.EXCESSIVE_UNCERTAINTY)
-    if not quotes:
+    valid_quotes = [quote for quote in quotes if quote.decimal_odds > 1 and quote.observed_at <= decision_time]
+    if fixture_kickoff is not None:
+        post_kickoff = [quote for quote in valid_quotes if quote.observed_at >= fixture_kickoff]
+        valid_quotes = [quote for quote in valid_quotes if quote.observed_at < fixture_kickoff]
+        if post_kickoff and not valid_quotes:
+            reasons.append(NoBetReason.POST_KICKOFF_REFERENCE)
+    if len(valid_quotes) < len(quotes) and not valid_quotes:
+        reasons.append(NoBetReason.INVALID_REFERENCE_ODDS)
+    if not valid_quotes:
         reasons.append(NoBetReason.MISSING_ODDS)
-        return BettingDecision("NO_BET", tuple(dict.fromkeys(reasons)))
-    freshest = max(quote.observed_at for quote in quotes)
-    if freshest > decision_time or decision_time - freshest > maximum_odds_age:
-        reasons.append(NoBetReason.NO_ACTION_STALE_ODDS)
+        non_market_reasons = [reason for reason in reasons if reason != NoBetReason.MISSING_ODDS]
+        return BettingDecision(
+            "NO_BET" if non_market_reasons else "PRICE_TARGET",
+            tuple(dict.fromkeys(reasons)),
+            manual_price_confirmation_required=True,
+        )
     candidates = []
-    for quote in quotes:
+    for quote in valid_quotes:
         probability = probabilities[quote.outcome]
         advantage = probability - quote.fair_probability
         expected_value = probability * quote.decimal_odds - 1
         if advantage >= risk.minimum_probability_advantage and expected_value >= risk.minimum_expected_value:
             candidates.append((expected_value, quote, probability))
     if not candidates:
-        if all(probabilities[q.outcome] - q.fair_probability < risk.minimum_probability_advantage for q in quotes):
+        if all(
+            probabilities[q.outcome] - q.fair_probability < risk.minimum_probability_advantage for q in valid_quotes
+        ):
             reasons.append(NoBetReason.INSUFFICIENT_PROBABILITY_ADVANTAGE)
-        if all(probabilities[q.outcome] * q.decimal_odds - 1 < risk.minimum_expected_value for q in quotes):
+        if all(probabilities[q.outcome] * q.decimal_odds - 1 < risk.minimum_expected_value for q in valid_quotes):
             reasons.append(NoBetReason.NON_POSITIVE_EXPECTED_VALUE)
     if current_daily_exposure >= risk.maximum_daily_exposure:
         reasons.append(NoBetReason.DAILY_EXPOSURE_LIMIT)
@@ -150,7 +175,7 @@ def decide_wager(
     if not 0 < stake <= 1:
         return BettingDecision("NO_BET", (NoBetReason.NON_POSITIVE_EXPECTED_VALUE,))
     return BettingDecision(
-        "BET",
+        "BET_IF_PRICE_AVAILABLE",
         (),
         quote.outcome,
         probability,
@@ -161,4 +186,7 @@ def decide_wager(
         (1 + risk.minimum_expected_value) / probability,
         quote.observed_at,
         stake,
+        "LATEST_PROVIDER_REFERENCE",
+        None,
+        True,
     )

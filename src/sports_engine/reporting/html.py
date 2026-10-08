@@ -46,21 +46,24 @@ class OpportunityRow:
     fixture: str
     market: str
     selection: str
-    bookmaker: str
-    best_odds: float
+    model_probability: float
+    model_fair_odds: float
     minimum_odds: float
-    fundamental_probability: float | None
-    ml_probability: float | None
-    fused_probability: float | None
-    market_probability: float
-    raw_edge: float
-    robust_edge: float
-    expected_return: float
+    reference_odds: float | None
+    bookmaker: str | None
+    reference_observed_at: datetime | None
+    reference_age_minutes: float | None
+    market_probability: float | None
+    reference_edge: float | None
+    robust_edge: float | None
+    reference_expected_return: float | None
     uncertainty: float
-    agreement: str
-    odds_age_minutes: float
+    reference_state: str
     decision: str
-    stake_fraction: float | None = None
+    snapshot_count: int = 0
+    price_movement: float | None = None
+    bookmaker_dispersion: float | None = None
+    execution_edge: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +88,14 @@ class DailyAnalysisReport:
     eligible_fixtures: int = 0
     model_rows: tuple[ModelHealthRow, ...] = ()
     opportunities: tuple[OpportunityRow, ...] = ()
+    price_targets: tuple[OpportunityRow, ...] = ()
     bankroll_exposure: float | None = None
+    reference_fixtures: int = 0
+    no_reference_fixtures: int = 0
+    median_reference_age_minutes: float | None = None
+    newest_reference_age_minutes: float | None = None
+    oldest_reference_age_minutes: float | None = None
+    snapshots_collected_this_run: int = 0
 
 
 def _number(value: float | None, digits: int = 3) -> str:
@@ -110,26 +120,43 @@ def _model_rows(report: DailyAnalysisReport) -> str:
 def _opportunity_rows(report: DailyAnalysisReport) -> str:
     if not report.opportunities:
         return (
-            '<tr><td colspan="20" class="empty">No qualified opportunities. The platform is preserving abstention while '
-            "model, market, dependency, or freshness evidence remains insufficient.</td></tr>"
+            '<tr><td colspan="19" class="empty">No conditional market opportunities. Football prices and execution '
+            "targets remain available in the Market Board.</td></tr>"
         )
     return "".join(
         f'<tr data-league="{escape(row.competition)}" data-decision="{escape(row.decision)}">'
         f"<td>{row.rank}</td><td>{escape(row.competition)}</td><td>{escape(row.kickoff.isoformat())}</td>"
         f"<td>{escape(row.fixture)}</td><td>{escape(row.market)}</td><td>{escape(row.selection)}</td>"
-        f"<td>{escape(row.bookmaker)}</td><td>{row.best_odds:.2f}</td><td>{row.minimum_odds:.2f}</td>"
-        f"<td>{_number(row.fundamental_probability)}</td><td>{_number(row.ml_probability)}</td>"
-        f"<td>{_number(row.fused_probability)}</td><td>{row.market_probability:.3f}</td>"
-        f"<td>{row.raw_edge:.3f}</td><td>{row.robust_edge:.3f}</td><td>{row.expected_return:.3f}</td>"
-        f"<td>{row.uncertainty:.3f}</td><td>{escape(row.agreement)}</td>"
-        f"<td>{row.odds_age_minutes:.0f}m</td><td>{escape(row.decision)}</td></tr>"
+        f"<td>{row.model_probability:.3f}</td><td>{row.model_fair_odds:.2f}</td><td>{row.minimum_odds:.2f}</td>"
+        f"<td>{_number(row.reference_odds, 2)}</td><td>{escape(row.bookmaker or '—')}</td>"
+        f"<td>{escape(row.reference_observed_at.isoformat() if row.reference_observed_at else '—')}</td>"
+        f"<td>{_number(row.reference_age_minutes, 0)}m</td><td>{_number(row.market_probability)}</td>"
+        f"<td>{_number(row.reference_edge)}</td><td>{_number(row.robust_edge)}</td>"
+        f"<td>{_number(row.execution_edge)}</td><td>{escape(row.reference_state)}</td>"
+        f"<td>{escape(row.decision)}</td></tr>"
         for row in report.opportunities
+    )
+
+
+def _price_target_rows(report: DailyAnalysisReport) -> str:
+    return "".join(
+        f"<tr><td>{escape(row.competition)}</td><td>{escape(row.fixture)}</td><td>{escape(row.market)}</td>"
+        f"<td>{escape(row.selection)}</td><td>{row.model_probability:.3f}</td><td>{row.model_fair_odds:.2f}</td>"
+        f"<td>{row.minimum_odds:.2f}</td><td>{_number(row.reference_odds, 2)}</td>"
+        f"<td>{escape(row.bookmaker or '—')}</td><td>{_number(row.reference_age_minutes, 0)}m</td>"
+        f"<td>{row.snapshot_count}</td><td>{_number(row.price_movement)}</td>"
+        f"<td>{_number(row.bookmaker_dispersion)}</td><td>{escape(row.reference_state)}</td>"
+        f"<td>{escape(row.decision)}</td></tr>"
+        for row in report.price_targets
     )
 
 
 def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Path:
     analyzed = sum(row.terminal_state == "ANALYZED" for row in report.fixtures)
-    no_bet = len(report.fixtures) - report.qualified_opportunities
+    decision_counts = {
+        decision: sum(row.decision == decision for row in report.price_targets)
+        for decision in ("BET_IF_PRICE_AVAILABLE", "WATCH", "NO_BET", "PRICE_TARGET")
+    }
     fixture_rows = "".join(
         f'<tr data-league="{escape(row.competition)}" data-state="{escape(row.terminal_state)}">'
         f"<td>{escape(row.competition)}</td><td>{escape(row.fixture)}</td>"
@@ -152,8 +179,10 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
     warnings = []
     if report.model_health != "QUALIFIED":
         warnings.append(f"No actionable model: {report.model_health}")
-    if report.odds_health in {"STALE", "INCOMPLETE"}:
-        warnings.append(f"Odds health: {report.odds_health}")
+    if report.no_reference_fixtures:
+        warnings.append(
+            f"No API-Football reference for {report.no_reference_fixtures} fixtures; price targets remain available"
+        )
     warning_html = "".join(f'<div class="warning">{escape(item)}</div>' for item in warnings)
     leagues = sorted({row.competition for row in report.fixtures})
     league_options = "".join(f'<option value="{escape(item)}">{escape(item)}</option>' for item in leagues)
@@ -174,25 +203,27 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
     metrics = (
         ("Expected fixtures", len(report.fixtures)),
         ("Analyzed", analyzed),
-        ("Actionable fixtures", report.qualified_opportunities),
+        ("Conditional candidates", decision_counts["BET_IF_PRICE_AVAILABLE"]),
         ("Markets priced", report.markets_analyzed),
-        ("Bet candidates", report.qualified_opportunities),
-        ("Watch", 0),
-        ("No bet", no_bet),
+        ("Price targets only", decision_counts["PRICE_TARGET"]),
+        ("Watch", decision_counts["WATCH"]),
+        ("No bet", decision_counts["NO_BET"]),
         ("Admitted leagues", report.admitted_leagues),
         ("Observation leagues", report.observation_leagues),
         ("Eligible history", report.eligible_fixtures),
+        ("Fixtures with references", report.reference_fixtures),
+        ("Fixtures without references", report.no_reference_fixtures),
+        ("Median reference age", f"{_number(report.median_reference_age_minutes, 0)}m"),
+        ("Newest reference age", f"{_number(report.newest_reference_age_minutes, 0)}m"),
+        ("Oldest reference age", f"{_number(report.oldest_reference_age_minutes, 0)}m"),
+        ("Snapshots this run", report.snapshots_collected_this_run),
         ("Exposure", _number(report.bankroll_exposure)),
     )
     metric_html = "".join(
         f'<div class="metric"><span class="label">{label}</span><span class="value">{value}</span></div>'
         for label, value in metrics
     )
-    market_rows = "".join(
-        f"<tr><td>{escape(row.competition)}</td><td>{escape(row.fixture)}</td>"
-        f'<td colspan="7" class="muted">{escape("Seven core fundamental prices persisted" if row.model_status.startswith("FUNDAMENTAL:") else "No qualified persisted prices")}</td><td>{escape(row.terminal_state)}</td></tr>'
-        for row in report.fixtures
-    )
+    market_rows = _price_target_rows(report)
     state_options = "".join(
         f"<option>{escape(state)}</option>" for state in sorted({row.terminal_state for row in report.fixtures})
     )
@@ -230,12 +261,12 @@ details{{border:1px solid var(--line);background:var(--panel);margin:7px 0}}summ
 <div><span class="label">Data health</span>{escape(report.data_health)}</div>
 <div><span class="label">Model health</span>{escape(report.model_health)}</div></div></header>
 <nav>{nav}</nav><main>{warning_html}<section id="overview" class="tab active"><h2>Executive market board</h2>
-<div class="board">{metric_html}</div><h2>Research state</h2><div class="panel">
-<p>The report remains useful while abstaining: eligible history is <strong>{report.eligible_fixtures}</strong>; model state is <strong>{escape(report.model_health)}</strong>; odds state is <strong>{escape(report.odds_health)}</strong>.</p>
+<div class="board">{metric_html}</div><div class="warning"><strong>MANUAL PRICE CONFIRMATION REQUIRED.</strong> Place only if your broker currently offers at least the displayed minimum acceptable odds. API-Football prices are reference observations, not guaranteed executable prices.</div><h2>Research state</h2><div class="panel">
+<p>Football pricing and market reference are separate: eligible history is <strong>{report.eligible_fixtures}</strong>; model state is <strong>{escape(report.model_health)}</strong>; market references are <strong>{escape(report.odds_health)}</strong>. Execution edge remains unknown until an operator checks a broker.</p>
 <p class="muted">No probability, price, or opportunity is inferred when persisted evidence is unavailable.</p></div></section>
-<section id="opportunities" class="tab"><h2>Top opportunities</h2><div class="filters"><select id="league-filter"><option value="">All leagues</option>{league_options}</select><select id="decision-filter"><option value="">All decisions</option><option>BET_CANDIDATE</option><option>WATCH</option><option>NO_BET</option></select></div><div class="panel"><table id="opportunity-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Bookmaker</th><th>Odds</th><th>Min odds</th><th>Fund.</th><th>ML</th><th>Fused</th><th>Market</th><th>Raw edge</th><th>Robust edge</th><th>EV</th><th>Uncertainty</th><th>Agreement</th><th>Age</th><th>Decision</th></tr></thead><tbody>{_opportunity_rows(report)}</tbody></table></div></section>
+<section id="opportunities" class="tab"><h2>Top conditional opportunities</h2><p class="muted">Reference edge compares the model with API-Football. Execution edge is unknown until the operator supplies an actual broker price.</p><div class="filters"><select id="league-filter"><option value="">All leagues</option>{league_options}</select><select id="decision-filter"><option value="">All decisions</option><option>BET_IF_PRICE_AVAILABLE</option><option>WATCH</option></select></div><div class="panel"><table id="opportunity-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Reference bookmaker</th><th>Reference observed</th><th>Age</th><th>Market p</th><th>Reference edge</th><th>Robust estimate</th><th>Execution edge</th><th>Reference state</th><th>Decision</th></tr></thead><tbody>{_opportunity_rows(report)}</tbody></table></div></section>
 <section id="matches" class="tab"><h2>Fixture research panels</h2>{research_panels or '<div class="panel empty">No expected fixtures in this range.</div>'}</section>
-<section id="market" class="tab"><h2>Institutional market matrix</h2><div class="panel"><table><thead><tr><th>Competition</th><th>Fixture</th><th>1</th><th>X</th><th>2</th><th>AH</th><th>O/U</th><th>BTTS</th><th>DNB</th><th>State</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>
+<section id="market" class="tab"><h2>Football price targets and API-Football references</h2><p class="muted">Latest-per-bookmaker references are used for comparison. Earlier snapshots contribute movement history only.</p><div class="panel"><table><thead><tr><th>Competition</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Bookmaker</th><th>Age</th><th>Snapshots</th><th>Movement</th><th>Dispersion</th><th>Reference state</th><th>Decision</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>
 <section id="models" class="tab"><h2>Model health and continuous learning</h2><div class="panel"><table><thead><tr><th>Algorithm</th><th>Version</th><th>State</th><th>Parent</th><th>Train cutoff</th><th>Train</th><th>Validation</th><th>Test</th><th>New</th><th>Log loss</th><th>Brier</th><th>RPS</th><th>Calibration</th><th>Next trigger</th></tr></thead><tbody>{_model_rows(report)}</tbody></table></div></section>
 <section id="data" class="tab"><h2>Data health</h2><div class="board"><div class="metric"><span class="label">Eligible fixtures</span><span class="value">{report.eligible_fixtures}</span></div><div class="metric"><span class="label">Observation leagues</span><span class="value">{report.observation_leagues}</span></div><div class="metric"><span class="label">Odds health</span><span class="value">{escape(report.odds_health)}</span></div></div></section>
 <section id="audit" class="tab"><h2>Full universe audit</h2><div class="filters"><select id="audit-league"><option value="">All leagues</option>{league_options}</select><select id="audit-state"><option value="">All states</option>{state_options}</select></div><div class="panel"><table id="audit-table"><thead><tr><th>Competition</th><th>Fixture</th><th>Kickoff</th><th>State</th><th>Odds</th><th>Model</th><th>Reasons</th></tr></thead><tbody>{fixture_rows}</tbody></table></div></section></main>

@@ -151,7 +151,7 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 | Immutable prediction persistence | VERIFIED OFFLINE | Prediction timestamp, cutoff, odds timestamp, model version and per-fixture probabilities append on repeat runs. |
 | `sports-engine predict tomorrow` | IMPLEMENTED | Terminal output includes fixture context, model/market probabilities, differences, quality, model version and odds time. |
 | First-class betting abstention | VERIFIED OFFLINE | Separate immutable decisions emit machine-readable `NO_BET` reasons, including stale/missing odds, insufficient evidence/history/calibration/confidence/edge/EV and exposure limits. |
-| Odds freshness and bounded risk | VERIFIED OFFLINE | Decisions use only explicit quotes observed at/before prediction time, enforce configurable maximum age and bounded fractional-Kelly/exposure caps; bookmaker execution remains manual. |
+| Reference-odds semantics and bounded risk | VERIFIED LIVE/OFFLINE | Decisions use valid quotes observed at/before prediction time, retain age as visible information rather than a universal veto, select latest-per-bookmaker references, and enforce settlement-aware minimum acceptable odds plus bounded fractional-Kelly/exposure caps; bookmaker execution remains manual. |
 
 ## Cross-cutting requirements
 

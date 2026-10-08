@@ -63,9 +63,12 @@ def store_odds_snapshot(
         "INSERT INTO odds_snapshots VALUES (?, ?, ?, ?, ?, ?, ?)",
         [snapshot_id, fixture_id, observed, provider_update, source_raw_path, job_run_id, content_hash],
     )
-    groups: dict[tuple[int, int], list[OddsPrice]] = defaultdict(list)
+    groups: dict[tuple[int, int, str], list[OddsPrice]] = defaultdict(list)
     for price in prices:
-        groups[(price.provider_bookmaker_id, price.provider_market_id)].append(price)
+        line_group = price.line or ""
+        if line_group and "handicap" in price.market_name.casefold():
+            line_group = f"{abs(float(line_group)):g}"
+        groups[(price.provider_bookmaker_id, price.provider_market_id, line_group)].append(price)
     bookmakers: dict[object, list[object]] = {}
     markets: dict[object, list[object]] = {}
     selections: dict[object, list[object]] = {}

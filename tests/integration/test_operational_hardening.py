@@ -165,7 +165,7 @@ def test_quality_integrity_and_backup_verification(tmp_path: Path) -> None:
     (project / "config" / "app.yaml").write_text("mode: development\n", encoding="utf-8")
     destination = tmp_path / "backup"
     manifest = create_backup(project, database_path, destination)
-    assert json.loads(manifest.read_text())["schema_version"] == 25
+    assert json.loads(manifest.read_text())["schema_version"] == 26
     verified = verify_backup(destination)
     assert verified.valid
     assert verified.row_counts["fixtures"] == 0

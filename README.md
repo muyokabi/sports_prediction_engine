@@ -1,177 +1,524 @@
 # Sports Prediction Engine
 
-An offline-first, command-line football data, analytics, and prediction platform. API-Football v3 supplies source facts; immutable raw payloads and the local DuckDB/Parquet ledger are the durable research asset. The design protects point-in-time history, quota, data lineage, and training eligibility.
+<div align="center">
 
-## Architecture
+**Point-in-time football intelligence, institutional pricing, and auditable market research**
 
-Responsibilities are deliberately separated:
+![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![DuckDB](https://img.shields.io/badge/Warehouse-DuckDB-FFF000?logo=duckdb&logoColor=black)
+![CLI](https://img.shields.io/badge/Interface-Typer_CLI-0B7285)
+![Tests](https://img.shields.io/badge/Tests-Offline_by_default-2E8B57)
+![Execution](https://img.shields.io/badge/Execution-Manual_price_confirmation-C05621)
 
-- `providers/api_football`: authenticated HTTP, validation, pagination, retries, and quota headers.
-- `quota`: priority-aware request admission and protected reserves.
-- `warehouse`: migrations, repositories, transactions, raw JSON gzip, and Parquet.
-- `sports/football`: domain records, ingestion, normalization, quality, features, and prediction context.
-- `models`: statistical and ML algorithms only.
-- `training` and `evaluation`: chronological datasets, fitting, calibration, promotion, and audits.
-- `jobs`: idempotent workflows; `cli`: terminal presentation only.
+<sub>API-Football facts in. Immutable evidence, calibrated probabilities, fair prices, and conditional execution targets out.</sub>
 
-The canonical update path is: immutable raw response → validated provider envelope → normalized package in memory → quality assessment → one database transaction. Failed packages remain recoverable from raw storage and are excluded from ML.
+</div>
 
-## Installation
+> [!IMPORTANT]
+> This software does **not** place wagers and does **not** know the price currently available at your broker. API-Football odds are reference observations. Every candidate requires a manual price check: proceed only when the actual broker price is at or above the displayed **minimum acceptable odds**, subject to every non-price risk gate.
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+## Table of contents
+
+- [What the engine does](#what-the-engine-does)
+- [The three-price operating model](#the-three-price-operating-model)
+- [Architecture and data flow](#architecture-and-data-flow)
+- [Quick start](#quick-start)
+- [Daily operator workflow](#daily-operator-workflow)
+- [Complete command guide](#complete-command-guide)
+- [Market-reference semantics](#market-reference-semantics)
+- [Models, evaluation, and promotion](#models-evaluation-and-promotion)
+- [Data quality and point-in-time safety](#data-quality-and-point-in-time-safety)
+- [Quota and provider behavior](#quota-and-provider-behavior)
+- [Configuration](#configuration)
+- [Reports and artifacts](#reports-and-artifacts)
+- [Backup, recovery, and integrity](#backup-recovery-and-integrity)
+- [Development and verification](#development-and-verification)
+- [Troubleshooting](#troubleshooting)
+- [Repository layout](#repository-layout)
+- [Safety boundary](#safety-boundary)
+
+## What the engine does
+
+Sports Prediction Engine is an offline-first Python platform for collecting football data, maintaining a point-in-time research warehouse, training and governing prediction models, pricing supported markets, and producing auditable HTML analysis.
+
+Its production workflow:
+
+1. discovers and reconciles the complete requested fixture universe;
+2. collects every available API-Football odds page and preserves raw evidence;
+3. settles completed predictions and refreshes performance feedback;
+4. checks fixture dependencies, data quality, model qualification, and football-state validity;
+5. produces fundamental probabilities for every qualified fixture;
+6. derives fair odds and settlement-aware minimum acceptable odds;
+7. compares those prices with the newest valid API-Football reference per bookmaker;
+8. ranks conditional opportunities without treating reference age as an automatic veto;
+9. writes persisted decisions, price targets, provenance, and an interactive HTML report.
+
+The current fundamental board supports seven selections per analyzed fixture: home/draw/away, over/under 2.5, and both-teams-to-score yes/no. Settlement utilities also support push, half-win, half-loss, and Asian quarter-line economics.
+
+## The three-price operating model
+
+| Price | Meaning | Known by the engine? | Used for |
+|---|---|---:|---|
+| **Model fair odds** | Odds implied by the settlement-aware football probability | Yes | Valuation |
+| **API-Football reference odds** | Latest valid observation supplied for a bookmaker/market/selection | Yes | Market comparison and movement research |
+| **Operator execution odds** | Actual price currently offered by the operator's broker | No, until manually supplied | Final execution decision |
+
+```text
+football evidence ──> model probability ──> fair odds
+                                 │
+                                 ├──> uncertainty + required return
+                                 │              └──> minimum acceptable odds
+                                 │
+API-Football snapshots ──> latest-per-bookmaker references ──> reference edge
+
+actual broker price (manual) ──> compare with minimum odds ──> PASS / DO NOT BET
+```
+
+### The execution rule
+
+```text
+IF actual broker odds >= minimum acceptable odds:
+    price requirement passes, subject to every non-price gate
+ELSE:
+    DO NOT BET
+```
+
+An API-Football observation of `1.96` is never presented as guaranteed execution. If fair odds are `1.72` and minimum acceptable odds are `1.84`, the instruction is: **check brokers and proceed only at 1.84 or better**.
+
+## Architecture and data flow
+
+```text
+API-Football
+    │
+    ├── authenticated requests, pagination, retries, quota headers
+    ▼
+immutable raw JSON.gz + request metadata
+    │
+    ├── envelope validation and domain normalization
+    ├── quarantine on malformed/incomplete packages
+    ▼
+DuckDB operational ledger + append-only odds snapshots
+    │
+    ├── point-in-time features ──> immutable Parquet datasets
+    ├── model training/evaluation ──> immutable model registry
+    └── fixture analysis ──> prices, references, decisions, HTML
+```
+
+| Area | Responsibility |
+|---|---|
+| `providers/api_football` | HTTP authentication, validation, pagination, retries, provider headers |
+| `quota` | Priority-aware admission, observed provider limits, protected reserves |
+| `warehouse` | Migrations, repositories, transactions, raw storage, Parquet |
+| `sports/football` | Domain records, ingestion, normalization, quality, features, prediction context |
+| `models` | Statistical and machine-learning algorithms |
+| `training` / `evaluation` | Chronological datasets, calibration, walk-forward evaluation, promotion, backtests |
+| `markets` | References, no-vig normalization, settlement, thresholds, decisions |
+| `analysis` / `reporting` | Complete-universe pricing, ranking, persistence, HTML |
+| `jobs` / `orchestration` | Idempotent workflows, locks, checkpoints, telemetry, recovery |
+| `cli` | Operator commands; business logic remains in services |
+
+The canonical write path is `immutable raw response -> validated envelope -> normalized package -> quality assessment -> one database transaction`. Failed packages remain recoverable from raw storage and are excluded from machine learning.
+
+## Quick start
+
+### Requirements
+
+- Python 3.12 or newer.
+- [`uv`](https://docs.astral.sh/uv/) for environment and command execution.
+- API-Football v3 credentials for live collection. Offline analysis and normal tests need no network.
+
+### Install
 
 ```powershell
+git clone <repository-url>
+Set-Location sports_prediction_engine
 uv sync --all-groups
 Copy-Item .env.example .env
 ```
 
-Set `API_FOOTBALL_KEY` in `.env`. Never commit `.env`.
-
-Initialize and inspect the warehouse:
+Set `API_FOOTBALL_KEY=replace-with-your-key` in `.env`. Never commit secrets.
 
 ```powershell
 uv run sports-engine data migrate
 uv run sports-engine doctor
+uv run sports-engine data integrity
 ```
 
-## Operations
+### Produce an analysis
 
 ```powershell
-# Validate configured candidate league-season coverage before admission
-uv run sports-engine football coverage audit
+# Complete live run
+uv run sports-engine run --date tomorrow
+uv run sports-engine run --date today
 
-# Build current-season reference data and fixture skeletons
-uv run sports-engine football bootstrap
+# Explicit date and bounded 1–31 day horizon
+uv run sports-engine run --date 2026-10-09 --days 3
 
-# Enrich completed fixtures in API-supported batches of at most 20 IDs
-uv run sports-engine football enrich --limit 20
+# Reprice from persisted evidence without provider calls
+uv run sports-engine run --date tomorrow --offline
+```
 
-# Progressively enrich completed current-season fixtures within spare quota
-uv run sports-engine football backfill
+The command prints an analysis run ID and report path. Open the HTML under `artifacts/reports/` and confirm every candidate against a real broker.
 
-# Normal idempotent operation
+## Daily operator workflow
+
+```powershell
+# 1. Local health, no provider quota
+uv run sports-engine doctor
+
+# 2. Provider state when operating live
+uv run sports-engine api quota
+
+# 3. Resumable football-ledger maintenance
 uv run sports-engine daily
 
-# Focused workflows
+# 4. Complete-universe pricing
+uv run sports-engine run --date tomorrow
+
+# 5. Post-run assurance
+uv run sports-engine data integrity
+```
+
+`daily` maintains the football ledger. `run` is the institutional analysis workflow. They remain separate so persisted evidence can be repriced and audited offline.
+
+A live `run` acquires a lock, refreshes account state, consumes every odds page, deduplicates unchanged observations, settles predictions, refreshes performance and research rollups, analyzes the full universe, writes seven fundamental prices per analyzed fixture, selects latest-per-bookmaker references, calculates thresholds and edges, persists decisions, and generates HTML.
+
+## Complete command guide
+
+Every command supports `--help`. Use global `--verbose` / `-v` before the command for detailed logs.
+
+```powershell
+uv run sports-engine --help
+uv run sports-engine --verbose run --date tomorrow
+uv run sports-engine football --help
+uv run sports-engine models --help
+```
+
+### Principal analysis and diagnostics
+
+| Command | Purpose |
+|---|---|
+| `sports-engine run --date today` | Live collection and analysis for today |
+| `sports-engine run --date tomorrow` | Live collection and analysis for tomorrow |
+| `sports-engine run --date YYYY-MM-DD --days N` | Explicit inclusive window, 1–31 days |
+| `sports-engine run --date … --offline` | Persisted evidence only; no provider calls |
+| `sports-engine daily` | Principal idempotent football maintenance |
+| `sports-engine doctor` | Local configuration, schema, directory, and state checks |
+| `sports-engine doctor --connectivity` | Also verify provider connectivity |
+| `sports-engine doctor --connectivity --verify-current-season` | Explicit current-season probe |
+
+### Provider and quota
+
+```powershell
+uv run sports-engine api quota
+uv run sports-engine api quota --json
+uv run sports-engine api capabilities
+uv run sports-engine api capabilities --json
+```
+
+### League discovery and admission
+
+```powershell
+uv run sports-engine leagues discover
+uv run sports-engine leagues list --limit 100
+uv run sports-engine leagues admit-observation --limit 40
+uv run sports-engine football coverage audit
+uv run sports-engine football coverage audit --json
+```
+
+Admission is explicit. A discoverable competition is not automatically production/model eligible.
+
+### Football ingestion, repair, and quality
+
+```powershell
+# Teams and fixture skeletons for admitted competition-seasons
+uv run sports-engine football bootstrap
+
+# Normal resumable workflow; optional deliberate date override
+uv run sports-engine football daily
+uv run sports-engine football daily --as-of 2026-10-08
+
+# Completed-fixture enrichment and safe-surplus repair
+uv run sports-engine football enrich --limit 20
+uv run sports-engine football backfill
+
+# Mutable results and season lifecycle
 uv run sports-engine football reconcile
 uv run sports-engine football seasons
 uv run sports-engine football season-rollover
+
+# Focused odds collection
 uv run sports-engine football odds tomorrow
+uv run sports-engine football odds tomorrow --date 2026-10-09
+
+# Quality views and bounded live completeness probe
+uv run sports-engine football quality
 uv run sports-engine football quality --summary --detailed
+uv run sports-engine football quality --json
 uv run sports-engine football quality-soak --leagues 3 --fixtures-per-league 2
+```
 
-# Provider state (status is quota-free; current-season probing is explicit)
-uv run sports-engine api capabilities
-uv run sports-engine api quota
-uv run sports-engine doctor --connectivity
-uv run sports-engine doctor --connectivity --verify-current-season
+### Features, training, and calibration
 
-# Modeling
+```powershell
 uv run sports-engine features build --name football-training
+uv run sports-engine features build --name football-training --json
+
 uv run sports-engine train --model elo
 uv run sports-engine train --model poisson
 uv run sports-engine train --model dixon-coles
 uv run sports-engine train --model logistic
 uv run sports-engine train --model catboost
 uv run sports-engine train --model lightgbm
-# Optional validation-holdout probability calibration
+
+# Dataset selection and validation-holdout calibration
+uv run sports-engine train --model logistic --dataset football-training
 uv run sports-engine train --model logistic --calibration platt
-uv run sports-engine evaluate --all
-uv run sports-engine evaluate --model logistic --rolling-periods 100
-uv run sports-engine backtest --all
-uv run sports-engine predict tomorrow
-uv run sports-engine models list
-uv run sports-engine models leaderboard
-uv run sports-engine models reliability
-uv run sports-engine models promote <candidate-version>
-uv run sports-engine models reject <candidate-version>
+uv run sports-engine train --model logistic --calibration isotonic
 
-# Operational assurance
-uv run sports-engine data integrity
-uv run sports-engine data backup D:\sports-engine-backups\2026-10-07
-uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-07
+# Explicit immutable parent lineage
+uv run sports-engine train --model lightgbm --mode warm_start --parent <model-version>
 ```
 
-Commands support `--help`; read-only status commands support `--json` where useful. Live commands fail clearly if credentials or prerequisite data are absent. They never manufacture data or probabilities.
+`--mode` accepts `full_refit` or `warm_start`. Warm-start training requires the immutable parent version.
 
-## Quota behavior
-
-Provider response headers are the runtime authority. `/status` supplies the account plan, activation state, subscription end (when supplied), and daily usage. No plan name is mapped to a hardcoded quota. Every provider response refreshes the observed daily and per-minute limits; a status/header disagreement is logged and the fresher headers win. A later upgrade, downgrade, or expiration is therefore detected without a code change.
-
-P0 protects accounting/reserves; P1 finalizes matches; P2 discovers tomorrow and captures odds; P3–P6 stop automatically before configured daily or minute reserves. Enrichment uses batches of at most 20 fixture IDs. Backfill budget is:
-
-```text
-remaining - protected reserve - estimated mandatory work
-```
-
-Unused quota is acceptable.
-
-## Development replay and production ledger
-
-`config/app.yaml` explicitly selects `development` or `production`. Development uses the configured accessible replay season (currently 2024) and labels its competition-season rows `replay`. Production always targets the provider's current season and never silently falls back to historical data. The connected subscription passed controlled current-season qualification on 2026-10-07, so the repository is now in production mode; replay records remain separate and are never promoted into the official ledger.
-
-`doctor --connectivity` refreshes subscription and quota state. A current-season qualification call occurs only with `--verify-current-season` or after a genuine subscription-plan change is detected. Quota enforcement uses provider-reported status and response headers, never a plan-name lookup. Replay records are never presented as the official live ledger.
-
-## Data-quality policy
-
-Scores alone do not make a match trainable. The completeness ledger independently tracks metadata, scores, events, goals/assists/cards/substitutions, both lineups and benches, both team-stat rows, and both player-stat groups. Every known starter and substitution entrant must have a player-stat row with non-null minutes. Unused substitutes do not require match-performance statistics, and action/role-specific fields remain nullable. Unknown upstream values remain `NULL`; known zero remains `0`. Final eligibility is `ML_ELIGIBLE`, `NOT_ML_ELIGIBLE`, or `PENDING_REPAIR`. Incomplete/malformed packages are recorded in `data_quality_issues` and `data/quarantine` with bounded retries.
-
-Every feature row has a prediction timestamp. Only source observations strictly available by that timestamp may contribute. Official evaluation is chronological or walk-forward; random splitting is forbidden.
-
-Training selects a named or latest registered feature dataset, preserves its schema/data hashes, uses chronological train/validation/test periods, and writes an immutable model plus complete JSON manifest. ML tuning is deliberately small and CPU-bounded. Platt or isotonic calibration fits only the validation holdout. Promotion requires better held-out log loss and Brier score than the current champion and, when available, the independent bookmaker benchmark. Walk-forward reports include ECE, calibration curves, confusion matrices and closing-market comparison where historical snapshots exist.
-
-Backtests consume persisted historical predictions and the latest real odds snapshot available at each prediction timestamp. A simulated wager requires both a configured probability difference and positive expected value; profitability never substitutes for probability-quality promotion criteria.
-
-Model probabilities and betting decisions are separate records. Conservative configurable evidence gates cover training size, class counts, chronological validation/test size, team history, calibration, confidence, market availability and odds freshness. A failed gate produces a machine-readable `NO_BET` reason such as `NO_ACTION_STALE_ODDS`; it never forces a wager. Fractional-Kelly sizing is optional and remains bounded by per-wager, daily-exposure and simultaneous-recommendation caps. There is no automated bookmaker execution.
-
-Injury availability is append-only and point-in-time: a zero is trusted only when a dated injury collection completed before the prediction cutoff. Lineup strength is populated only from a lineup observation already known at that cutoff. Feature datasets are immutable, content-addressed Parquet artifacts with persisted schema, data hash, cutoff range, and configuration.
-
-## Daily routine
-
-`sports-engine daily` acquires a local lock, records a job run, refreshes provider state, and resumes from the last successfully checkpointed discovery date through tomorrow (up to eight dates per run). It filters admitted competitions, enriches new finals in ≤20-ID batches, validates and commits packages, follows all odds pages, writes append-only price snapshots, predicts only when artifacts and data qualify, and spends only safe surplus on backfill. A date is checkpointed only after its enrichment succeeds. Re-running after a crash or missed schedule is idempotent.
-
-For unattended Windows operation, exact Task Scheduler configuration, recovery procedures and alert categories, see
-[the operations runbook](docs/operations/RUNBOOK.md).
-
-## Season rollover
-
-The season monitor discovers newly exposed provider seasons, retains all earlier seasons unchanged, re-runs mandatory coverage gates, creates an admitted/rejected competition-season, loads teams and the schedule skeleton, then lets ordinary daily collection take over. Older seasons are not fetched automatically.
-
-## Directory layout
-
-```text
-config/       validated YAML behavior and model settings
-migrations/   deterministic DuckDB schema history
-src/          application packages
-tests/        offline unit/integration/regression/provider-contract tests
-data/raw/     immutable gzipped source payloads plus metadata
-data/warehouse/sports.duckdb
-data/parquet/ immutable analytical datasets
-data/quarantine/ rejected packages and investigation metadata
-artifacts/    versioned models, evaluations, backtests, and reports
-state/        scheduler, quota, checkpoints, and locks
-logs/         rotating operational logs
-```
-
-## Backup
-
-Stop running jobs, create a coherent backup, then verify it in isolation:
+### Evaluation, backtesting, and model governance
 
 ```powershell
-uv run sports-engine data backup D:\sports-engine-backups\2026-10-07
-uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-07
+uv run sports-engine evaluate --model dixon-coles
+uv run sports-engine evaluate --all
+uv run sports-engine evaluate --model logistic --dataset football-training
+uv run sports-engine evaluate --model logistic --rolling-periods 100
+uv run sports-engine backtest --all
+
+uv run sports-engine models list
+uv run sports-engine models list --json
+uv run sports-engine models leaderboard
+uv run sports-engine models reliability
+uv run sports-engine models reliability --json
+uv run sports-engine models promote <candidate-version>
+uv run sports-engine models reject <candidate-version>
 ```
 
-The manifest hashes every copied file, verifies schema and row counts, opens the copied DuckDB read-only, and runs relational/artifact integrity checks without touching the live database. Raw payloads and historical odds/predictions are append-only; do not prune them without an explicit retention and audit decision.
+Promotion requires held-out probability-quality evidence. Profit alone is never a promotion criterion.
+
+### Prediction compatibility workflow
+
+```powershell
+uv run sports-engine predict tomorrow
+uv run sports-engine predict tomorrow --date 2026-10-09
+```
+
+The institutional `run` report is the preferred full-universe workflow. The prediction command remains available and uses the same rule: reference age is informational, not an automatic veto.
+
+### Warehouse assurance
+
+```powershell
+uv run sports-engine data migrate
+uv run sports-engine data integrity
+uv run sports-engine data backup D:\sports-engine-backups\2026-10-08
+uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-08
+```
+
+## Market-reference semantics
+
+### Reference states
+
+| State | Meaning | Automatic price veto? |
+|---|---|---:|
+| `CURRENT_REFERENCE` | Latest observation is inside the configured display-age band | No |
+| `LATEST_PROVIDER_REFERENCE` | Newest valid source observation | No |
+| `AGED_REFERENCE` | Latest observation is older; its age is shown honestly | **No** |
+| `HISTORICAL_REFERENCE` | Historical or research-only context | Not a live execution price |
+| `NO_REFERENCE_ODDS` | No valid API-Football reference | No fabricated edge; price target only |
+| `INVALID_REFERENCE` | Malformed odds, mapping, fixture, or provenance | Yes |
+| `POST_KICKOFF_INVALID` | Prematch observation occurred after kickoff | Yes |
+
+Age is a market-quality attribute, not proof of invalidity. The report preserves provider observation time, local collection time, analysis time, kickoff, age, bookmaker, price, snapshot count, movement, consensus, and dispersion.
+
+### Latest-per-bookmaker selection
+
+For each bookmaker/market/selection, the engine selects the newest valid observation known at analysis time. It then calculates the best latest reference, worst latest reference, median consensus, dispersion, and first-to-latest movement. An older high price is movement history—not a substitute for that bookmaker's newer lower price.
+
+### Decision states
+
+| Decision | Operator meaning |
+|---|---|
+| `BET_IF_PRICE_AVAILABLE` | Qualified positive discrepancy; check for at least the minimum odds |
+| `WATCH` | Positive signal exists but a qualification threshold is not met |
+| `NO_BET` | Price, evidence, or risk requirements are not met |
+| `PRICE_TARGET` | Football price exists but no valid market reference exists |
+
+Reference edge compares the model with API-Football. Execution edge remains unknown until an actual operator price exists.
+
+### Minimum acceptable odds
+
+The threshold solves for the decimal price that meets the configured required robust expected return after uncertainty adjustment. Ordinary outcomes use their win/loss distribution. Push and Asian quarter-line markets use the complete settlement distribution, including half wins and half losses; they are never reduced to a binary shortcut.
+
+### Strict invalidation and safety gates
+
+Removing the age veto does not weaken other controls. Decisions remain blocked for impossible odds, malformed/unsupported selections, wrong fixture associations, post-kickoff observations, a started fixture, corrupt provenance, unresolved intervening fixtures, stale football/model state, unqualified models, failed calibration/evidence requirements, unsupported settlement, or risk/exposure limits.
+
+## Models, evaluation, and promotion
+
+- Feature datasets are immutable and content-addressed, with schema/data hashes and cutoff ranges.
+- Splits are chronological train/validation/test periods; random splitting is forbidden.
+- ML tuning is deliberately small and CPU-bounded.
+- Platt or isotonic calibration fits only the validation holdout.
+- Walk-forward reports include log loss, Brier score, RPS, ECE, calibration curves, confusion matrices, and closing-market comparison where evidence exists.
+- Promotion requires improvement over the champion on held-out probability metrics and, where available, the bookmaker benchmark.
+- Backtests use persisted predictions and only odds known at each historical prediction timestamp.
+
+Probabilities, market comparisons, and execution decisions are separate records. No result is reverse-engineered into an earlier prediction.
+
+## Data quality and point-in-time safety
+
+Scores alone do not make a fixture trainable. Completeness independently tracks metadata, scores, events, goal/assist/card/substitution relationships, both lineups and benches, both team-stat rows, both player-stat groups, and player minutes for known starters and entrants.
+
+Unused substitutes need no match-performance row. Unknown upstream values remain `NULL`; known zero remains `0`. Eligibility is `ML_ELIGIBLE`, `NOT_ML_ELIGIBLE`, or `PENDING_REPAIR`. Problems are recorded in `data_quality_issues` and `data/quarantine/` with bounded repair attempts.
+
+Every feature row has a prediction timestamp, and only earlier observations may contribute. Injury availability is append-only. A zero-injury value is trusted only from a dated collection completed before the cutoff. Lineup strength requires an observation already known at that cutoff. An intervening team fixture makes football state genuinely stale and requires recomputation.
+
+## Quota and provider behavior
+
+Provider `/status` and response headers are authoritative. Every response refreshes observed daily and per-minute limits; fresher headers win if status differs. Plan upgrades, downgrades, and expiry are therefore detected without code changes.
+
+| Priority | Work |
+|---|---|
+| P0 | Accounting, status, protected reserve |
+| P1 | Finalize completed matches |
+| P2 | Discover tomorrow and capture odds |
+| P3–P6 | Optional work that stops before reserves |
+
+```text
+backfill budget = remaining - protected reserve - estimated mandatory work
+```
+
+Unused quota is acceptable. An unchanged provider timestamp or price is valid evidence and is deduplicated; it is not proof that the observation is wrong.
+
+## Configuration
+
+Primary settings live in [`config/app.yaml`](config/app.yaml); candidates live under [`config/leagues/`](config/leagues/).
+
+Important areas include mode, provider transport, timezone, quota reserves, backfill limits, odds deduplication, the **display-only** aged-reference band, model evidence and CPU bounds, calibration, risk thresholds, minimum expected return, Kelly fraction, exposure caps, and data/artifact/state/log paths.
+
+Development uses an explicitly configured replay season and labels its rows `replay`. Production targets current-season data and never silently falls back to history. Replay records are never silently promoted into the official ledger.
+
+## Reports and artifacts
+
+Principal reports are written to `artifacts/reports/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation.
+
+| Path | Contents |
+|---|---|
+| `artifacts/models/` | Immutable models and manifests |
+| `artifacts/evaluation/` | Walk-forward and calibration evidence |
+| `artifacts/backtests/` | Historical decision simulations |
+| `artifacts/reports/` | HTML analysis and acceptance evidence |
+| `data/parquet/` | Immutable analytical datasets |
+| `data/raw/` | Gzipped payloads and request metadata |
+| `data/quarantine/` | Rejected packages and investigation context |
+
+## Backup, recovery, and integrity
+
+Stop running jobs before a coherent backup:
+
+```powershell
+$backup = 'D:\sports-engine-backups\2026-10-08-schema-26'
+uv run sports-engine data backup $backup
+uv run sports-engine data verify-backup $backup
+```
+
+Verification hashes every copied file, validates schema and row counts, opens copied DuckDB read-only, and runs relational/artifact checks without touching production. Scheduler setup, lock recovery, alerts, and Windows Task Scheduler commands are in the [operations runbook](docs/operations/RUNBOOK.md).
+
+> [!WARNING]
+> Raw payloads, odds snapshots, predictions, decisions, and registered artifacts are audit history. Do not prune or rewrite them without an explicit retention and governance decision.
 
 ## Development and verification
 
+Normal tests are offline. Live provider-contract checks carry the `live` marker and must be selected deliberately.
+
 ```powershell
+# Test and coverage
 uv run pytest
 uv run pytest --cov=sports_engine --cov-branch --cov-report=term --cov-report=json:artifacts/reports/coverage.json
+uv run pytest tests/unit/test_reference_odds.py
+uv run pytest -k "minimum_acceptable_odds"
+
+# Static quality gates
+uv run ruff format --check .
 uv run ruff check .
 uv run mypy
+
+# Apply formatting intentionally
+uv run ruff format .
+
+# Deliberate live tests; consumes quota
+uv run pytest -m live
 ```
 
-Normal tests are offline. Live contract checks are marked `live` and skipped unless deliberately selected with credentials available.
+Recommended pre-commit sequence:
 
+```powershell
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
+uv run pytest
+uv run sports-engine data integrity
+```
+
+## Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| `uv` is not recognized | Install `uv`, restart the terminal, then run `uv --version` and `python --version` |
+| Credentials are missing | Copy `.env.example` to `.env`, set the key, then use `doctor --connectivity` |
+| Principal-run lock exists | Confirm no engine process is active; inspect the lock/job ledger and follow the runbook—never blindly remove an active lock |
+| `NO_REFERENCE_ODDS` | Football pricing still exists; use the minimum as a price target, but do not fabricate a reference edge |
+| `AGED_REFERENCE` | The observation is older but not automatically invalid; check brokers and enforce minimum odds |
+| Zero conditional candidates | Inspect audit reasons; zero is legitimate and the engine never manufactures discrepancies |
+| Low provider quota | Preserve the reserve; optional work will stop and resume later |
+
+Offline tests and `run --offline` remain usable without live credentials.
+
+## Repository layout
+
+```text
+config/                 validated YAML behavior, leagues, models, risk controls
+migrations/             deterministic DuckDB schema history
+src/sports_engine/
+  analysis/             complete-universe institutional pricing
+  cli/                  Typer command surface
+  core/                 configuration, paths, logging, telemetry
+  evaluation/           walk-forward metrics and backtests
+  markets/              references, decisions, settlement, age research
+  models/               algorithms and registry behavior
+  orchestration/        locks and job lifecycle
+  providers/            API-Football transport and validation
+  quota/                provider-aware budgeting
+  reporting/            interactive HTML generation
+  sports/football/      ingestion, quality, features, prediction
+  training/             datasets, fitting, calibration, feedback
+  warehouse/            database, migrations, backup, integrity
+tests/                  offline unit, integration, regression, contract tests
+data/raw/               immutable gzipped provider payloads
+data/warehouse/         DuckDB operational ledger
+data/parquet/           immutable feature datasets
+data/quarantine/        rejected packages and repair evidence
+artifacts/              models, evaluations, backtests, backups, reports
+state/                  checkpoints, locks, scheduler, quota state
+logs/                   rotating operational logs
+docs/                   runbooks and acceptance reports
+```
+
+## Safety boundary
+
+- No automated bookmaker execution.
+- No claim that an API-Football reference is currently executable.
+- No execution edge until an actual broker price is supplied.
+- No arbitrary odds-age haircut or universal time-based invalidation.
+- No weakening of fixture, data-quality, model, settlement, or exposure gates.
+- No fabricated probabilities, odds, opportunities, or observations.
+
+The intended operating statement is:
+
+> API-Football's latest reference was **X**. The model's fair price is **Y**. The minimum acceptable execution price is **Z**. The observation was recorded **T** ago. Check brokers now and proceed only if the actual executable price is **Z or better**.

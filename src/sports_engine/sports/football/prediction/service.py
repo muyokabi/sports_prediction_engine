@@ -2,7 +2,7 @@ import json
 import pickle
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +43,6 @@ class PredictionService:
         windows: list[int],
         exponential_half_life: float,
         prediction_lead_hours: int,
-        maximum_odds_age_minutes: int = 180,
         evidence_policy: EvidencePolicy | None = None,
         risk_policy: RiskPolicy | None = None,
     ) -> None:
@@ -55,7 +54,6 @@ class PredictionService:
             exponential_half_life=exponential_half_life,
             prediction_lead_hours=prediction_lead_hours,
         )
-        self.maximum_odds_age = timedelta(minutes=maximum_odds_age_minutes)
         self.evidence_policy = evidence_policy or EvidencePolicy(0, 0, 0, 0, 10, True, 0.40)
         self.risk_policy = risk_policy or RiskPolicy(0.01, 0.05, 5, 0.25, 0.01, 0.03, 0.0)
 
@@ -128,14 +126,14 @@ class PredictionService:
                 probabilities_by_name = dict(zip(("home", "draw", "away"), probabilities[index].tolist(), strict=True))
                 exposure_row = self.connection.execute(
                     "SELECT coalesce(sum(stake_fraction), 0), count(*) FROM prediction_decisions "
-                    "WHERE state='BET' AND CAST(decision_timestamp AS DATE)=CAST(? AS DATE)",
+                    "WHERE state='BET_IF_PRICE_AVAILABLE' AND CAST(decision_timestamp AS DATE)=CAST(? AS DATE)",
                     [observed],
                 ).fetchone()
                 decision = decide_wager(
                     probabilities_by_name,
                     quotes,
                     decision_time=observed,
-                    maximum_odds_age=self.maximum_odds_age,
+                    fixture_kickoff=row["kickoff_utc"],
                     model_metrics=model_metrics,
                     calibrated=bool(calibration_method),
                     home_history=int(row.get("home_history_matches") or 0),
@@ -157,7 +155,12 @@ class PredictionService:
                     ],
                 )
                 self.connection.execute(
-                    "INSERT INTO prediction_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
+                    "INSERT INTO prediction_decisions "
+                    "(decision_id, prediction_run_id, fixture_id, state, reason_codes, selected_market, "
+                    "model_probability, market_fair_probability, reference_decimal_odds, raw_implied_probability, "
+                    "reference_expected_value, minimum_acceptable_odds, odds_observation_timestamp, "
+                    "decision_timestamp, stake_fraction, reference_state, execution_edge, "
+                    "manual_price_confirmation_required) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [
                         str(uuid.uuid4()),
                         prediction_run_id,
@@ -167,13 +170,16 @@ class PredictionService:
                         decision.selected_market,
                         decision.model_probability,
                         decision.market_fair_probability,
-                        decision.offered_decimal_odds,
+                        decision.reference_decimal_odds,
                         decision.raw_implied_probability,
-                        decision.expected_value,
+                        decision.reference_expected_value,
                         decision.minimum_acceptable_odds,
                         decision.odds_observed_at,
                         observed,
                         decision.stake_fraction,
+                        decision.reference_state,
+                        decision.execution_edge,
+                        decision.manual_price_confirmation_required,
                     ],
                 )
             self.connection.commit()
@@ -232,19 +238,18 @@ class PredictionService:
 
     def _quotes(self, fixture_id: str, prediction_time: datetime) -> list[MarketQuote]:
         rows = self.connection.execute(
-            "WITH latest AS (SELECT max(observed_at) observed_at FROM odds_snapshots "
-            "WHERE fixture_id=? AND observed_at<=?) "
-            "SELECT s.normalized_name, avg(p.fair_probability), max(p.decimal_odds), o.observed_at "
-            "FROM odds_snapshots o JOIN latest l USING (observed_at) "
-            "JOIN odds_prices p USING (snapshot_id) JOIN bet_markets m USING (market_id) "
-            "JOIN bet_selections s USING (selection_id) WHERE o.fixture_id=? "
-            "AND lower(m.name) IN ('match winner','1x2') "
-            "GROUP BY s.normalized_name, o.observed_at",
-            [fixture_id, prediction_time, fixture_id],
+            "WITH ranked AS (SELECT s.normalized_name, p.fair_probability, p.decimal_odds, o.observed_at, "
+            "b.name, row_number() OVER (PARTITION BY b.bookmaker_id, s.selection_id "
+            "ORDER BY coalesce(o.provider_update_time, o.observed_at) DESC, o.observed_at DESC, o.snapshot_id DESC) rn "
+            "FROM odds_snapshots o JOIN odds_prices p USING (snapshot_id) JOIN bookmakers b USING (bookmaker_id) "
+            "JOIN bet_markets m USING (market_id) JOIN bet_selections s USING (selection_id) "
+            "WHERE o.fixture_id=? AND o.observed_at<=? AND lower(m.name) IN ('match winner','1x2')) "
+            "SELECT normalized_name, fair_probability, decimal_odds, observed_at, name FROM ranked WHERE rn=1",
+            [fixture_id, prediction_time],
         ).fetchall()
         return [
-            MarketQuote(str(outcome), float(fair), float(price), observed)
-            for outcome, fair, price, observed in rows
+            MarketQuote(str(outcome), float(fair), float(price), observed, str(bookmaker))
+            for outcome, fair, price, observed, bookmaker in rows
             if outcome in {"home", "draw", "away"} and fair is not None
         ]
 

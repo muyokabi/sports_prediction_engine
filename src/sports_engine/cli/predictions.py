@@ -31,7 +31,6 @@ def predict_tomorrow(
         windows=config.features.windows,
         exponential_half_life=config.features.exponential_half_life,
         prediction_lead_hours=config.features.prediction_lead_hours,
-        maximum_odds_age_minutes=config.odds.maximum_age_minutes,
         evidence_policy=EvidencePolicy(
             0,
             0,

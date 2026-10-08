@@ -46,7 +46,7 @@ class BackfillConfig(BaseModel):
 class OddsConfig(BaseModel):
     target_days_ahead: PositiveInt = 1
     snapshot_dedupe_seconds: int = Field(default=60, ge=0)
-    maximum_age_minutes: PositiveInt = 180
+    aged_reference_minutes: PositiveInt = 180
 
 
 class RiskConfig(BaseModel):

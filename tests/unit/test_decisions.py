@@ -20,13 +20,12 @@ METRICS = {
 }
 
 
-def test_stale_odds_produce_explicit_no_action() -> None:
+def test_aged_reference_remains_usable_and_requires_manual_price_check() -> None:
     now = datetime(2026, 10, 7, 12, tzinfo=UTC)
     decision = decide_wager(
         {"home": 0.6, "draw": 0.2, "away": 0.2},
         [MarketQuote("home", 0.45, 2.2, now - timedelta(hours=4))],
         decision_time=now,
-        maximum_odds_age=timedelta(hours=3),
         model_metrics=METRICS,
         calibrated=True,
         home_history=20,
@@ -34,8 +33,10 @@ def test_stale_odds_produce_explicit_no_action() -> None:
         evidence=EVIDENCE,
         risk=RISK,
     )
-    assert decision.state == "NO_BET"
-    assert NoBetReason.NO_ACTION_STALE_ODDS in decision.reasons
+    assert decision.state == "BET_IF_PRICE_AVAILABLE"
+    assert decision.reference_decimal_odds == pytest.approx(2.2)
+    assert decision.execution_edge is None
+    assert decision.manual_price_confirmation_required
 
 
 def test_evidence_gates_abstain_and_valid_quote_has_bounded_stake() -> None:
@@ -45,7 +46,6 @@ def test_evidence_gates_abstain_and_valid_quote_has_bounded_stake() -> None:
         {"home": 0.6, "draw": 0.2, "away": 0.2},
         quote,
         decision_time=now,
-        maximum_odds_age=timedelta(hours=3),
         model_metrics={},
         calibrated=False,
         home_history=1,
@@ -59,7 +59,6 @@ def test_evidence_gates_abstain_and_valid_quote_has_bounded_stake() -> None:
         {"home": 0.6, "draw": 0.2, "away": 0.2},
         quote,
         decision_time=now,
-        maximum_odds_age=timedelta(hours=3),
         model_metrics=METRICS,
         calibrated=True,
         home_history=20,
@@ -67,8 +66,8 @@ def test_evidence_gates_abstain_and_valid_quote_has_bounded_stake() -> None:
         evidence=EVIDENCE,
         risk=RISK,
     )
-    assert allowed.state == "BET"
-    assert allowed.expected_value == pytest.approx(0.32)
+    assert allowed.state == "BET_IF_PRICE_AVAILABLE"
+    assert allowed.reference_expected_value == pytest.approx(0.32)
     assert allowed.minimum_acceptable_odds == pytest.approx(1 / 0.6)
     assert allowed.stake_fraction == pytest.approx(0.01)
 
@@ -85,7 +84,6 @@ def test_model_specific_evidence_state_replaces_global_row_thresholds() -> None:
         {"home": 0.6, "draw": 0.2, "away": 0.2},
         [MarketQuote("home", 0.45, 2.2, now)],
         decision_time=now,
-        maximum_odds_age=timedelta(hours=3),
         model_metrics=metrics,
         calibrated=False,
         home_history=20,
@@ -93,7 +91,7 @@ def test_model_specific_evidence_state_replaces_global_row_thresholds() -> None:
         evidence=policy_with_impossible_legacy_thresholds,
         risk=RISK,
     )
-    assert decision.state == "BET"
+    assert decision.state == "BET_IF_PRICE_AVAILABLE"
 
 
 def test_non_actionable_model_specific_state_forces_abstention() -> None:
@@ -102,7 +100,6 @@ def test_non_actionable_model_specific_state_forces_abstention() -> None:
         {"home": 0.6, "draw": 0.2, "away": 0.2},
         [MarketQuote("home", 0.45, 2.2, now)],
         decision_time=now,
-        maximum_odds_age=timedelta(hours=3),
         model_metrics={"evidence_state": "RESEARCH_TRAINABLE", "calibration_required": False},
         calibrated=False,
         home_history=20,
@@ -112,3 +109,21 @@ def test_non_actionable_model_specific_state_forces_abstention() -> None:
     )
     assert decision.state == "NO_BET"
     assert NoBetReason.MODEL_NOT_SUFFICIENTLY_VALIDATED in decision.reasons
+
+
+def test_started_fixture_is_blocked_even_with_valid_prematch_reference() -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    decision = decide_wager(
+        {"home": 0.6, "draw": 0.2, "away": 0.2},
+        [MarketQuote("home", 0.45, 2.2, now - timedelta(hours=2))],
+        decision_time=now,
+        fixture_kickoff=now - timedelta(minutes=1),
+        model_metrics=METRICS,
+        calibrated=True,
+        home_history=20,
+        away_history=20,
+        evidence=EVIDENCE,
+        risk=RISK,
+    )
+    assert decision.state == "NO_BET"
+    assert decision.reasons == (NoBetReason.FIXTURE_ALREADY_STARTED,)

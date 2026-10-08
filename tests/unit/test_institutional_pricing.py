@@ -14,6 +14,7 @@ from sports_engine.analysis.dependencies import (
 from sports_engine.markets.implied_probability import power_probabilities, shin_probabilities
 from sports_engine.markets.pricing import CoreMarketPrices
 from sports_engine.markets.score_distribution import ScoreDistribution
+from sports_engine.markets.settlement import SettlementDistribution, check_manual_price
 from sports_engine.markets.taxonomy import (
     MarketState,
     classify_api_football_market,
@@ -74,6 +75,14 @@ def test_asian_quarter_total_has_half_settlement_and_minimum_odds() -> None:
     complement = CoreMarketPrices.from_expected_goals(1.5, 1.2).total(2.25, "under")
     assert complement.half_win == pytest.approx(result.half_loss)
     assert complement.full_loss == pytest.approx(result.full_win)
+
+
+def test_manual_execution_price_uses_settlement_aware_threshold() -> None:
+    quarter = SettlementDistribution(full_win=0.45, half_win=0.10, push=0.10, half_loss=0.10, full_loss=0.25)
+    minimum = quarter.minimum_odds(0.03)
+    assert minimum is not None
+    assert check_manual_price(quarter, minimum, required_expected_return=0.03).passes
+    assert not check_manual_price(quarter, minimum - 0.01, required_expected_return=0.03).passes
 
 
 def test_team_totals_and_correct_score() -> None:
@@ -164,6 +173,8 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
             "Full universe audit",
         )
     )
-    assert "No qualified opportunities" in document
+    assert "No conditional market opportunities" in document
+    assert "MANUAL PRICE CONFIRMATION REQUIRED" in document
+    assert "not guaranteed executable prices" in document
     assert "report-data" in document
     assert "audit-league" in document
