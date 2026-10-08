@@ -1,0 +1,82 @@
+policies:
+  elo:
+    research_rows: 24
+    validation_rows: 12
+    test_rows: 12
+    minimum_teams: 4
+    minimum_chronological_folds: 3
+    production_validation_rows: 40
+    production_test_rows: 40
+    calibration_rows: 0
+    maximum_missing_fraction: 1.0
+    rows_per_feature: 0.0
+    maximum_log_loss: 1.15
+    maximum_brier: 0.70
+  poisson:
+    research_rows: 24
+    validation_rows: 20
+    test_rows: 20
+    minimum_teams: 4
+    minimum_chronological_folds: 3
+    production_validation_rows: 40
+    production_test_rows: 40
+    calibration_rows: 0
+    maximum_missing_fraction: 1.0
+    rows_per_feature: 0.0
+    maximum_log_loss: 1.15
+    maximum_brier: 0.70
+  dixon-coles:
+    research_rows: 30
+    validation_rows: 24
+    test_rows: 24
+    minimum_teams: 4
+    minimum_chronological_folds: 4
+    production_validation_rows: 50
+    production_test_rows: 50
+    calibration_rows: 0
+    maximum_missing_fraction: 1.0
+    rows_per_feature: 0.0
+    maximum_log_loss: 1.15
+    maximum_brier: 0.70
+  logistic:
+    research_rows: 30
+    validation_rows: 30
+    test_rows: 30
+    minimum_teams: 4
+    minimum_class_rows: 8
+    minimum_chronological_folds: 4
+    production_validation_rows: 75
+    production_test_rows: 75
+    calibration_rows: 75
+    maximum_missing_fraction: 0.45
+    rows_per_feature: 1.0
+    maximum_log_loss: 1.12
+    maximum_brier: 0.68
+  catboost:
+    research_rows: 30
+    validation_rows: 40
+    test_rows: 40
+    minimum_teams: 4
+    minimum_class_rows: 8
+    minimum_chronological_folds: 5
+    production_validation_rows: 100
+    production_test_rows: 100
+    calibration_rows: 100
+    maximum_missing_fraction: 0.60
+    rows_per_feature: 1.5
+    maximum_log_loss: 1.12
+    maximum_brier: 0.68
+  lightgbm:
+    research_rows: 30
+    validation_rows: 40
+    test_rows: 40
+    minimum_teams: 4
+    minimum_class_rows: 8
+    minimum_chronological_folds: 5
+    production_validation_rows: 100
+    production_test_rows: 100
+    calibration_rows: 100
+    maximum_missing_fraction: 0.55
+    rows_per_feature: 1.5
+    maximum_log_loss: 1.12
+    maximum_brier: 0.68

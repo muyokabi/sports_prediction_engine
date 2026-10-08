@@ -155,7 +155,12 @@ def _replace_lineups(
                 source_raw_path,
             ],
         )
+        seen_lineup_players: set[tuple[object, str]] = set()
         for player in record.players:
+            player_key = (player.provider_player_id, player.role)
+            if player_key in seen_lineup_players:
+                continue
+            seen_lineup_players.add(player_key)
             player_id = _ensure_player(connection, player.provider_player_id, player.name, source_raw_path, observed)
             connection.execute(
                 "INSERT INTO lineup_players VALUES (?, ?, ?, ?, ?, ?)",
@@ -200,8 +205,13 @@ def _replace_player_statistics(
     observed: datetime,
 ) -> None:
     connection.execute("DELETE FROM player_match_statistics WHERE fixture_id=?", [fixture_id])
+    seen_player_statistics: set[tuple[int, int]] = set()
     for team_payload in payloads:
         for record in normalize_player_statistics(team_payload):
+            record_key = (record.provider_team_id, record.provider_player_id)
+            if record_key in seen_player_statistics:
+                continue
+            seen_player_statistics.add(record_key)
             stats = record.statistics
             player_id = _ensure_player(
                 connection, record.provider_player_id, record.player_name, source_raw_path, observed

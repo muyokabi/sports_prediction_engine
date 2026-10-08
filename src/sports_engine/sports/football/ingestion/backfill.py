@@ -1,8 +1,13 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import duckdb
 
+from sports_engine.core.enums import Priority
+from sports_engine.core.exceptions import QuotaExhaustedError
+from sports_engine.providers.base import SportsDataProvider
 from sports_engine.quota.budget import QuotaBudget
 
 
@@ -11,6 +16,35 @@ class BackfillPlan:
     fixture_ids: tuple[int, ...]
     request_budget: int
     candidate_count: int
+
+
+class RequestCappedProvider:
+    """Count every backfill request, including targeted repairs."""
+
+    def __init__(self, provider: SportsDataProvider, maximum_requests: int) -> None:
+        self.provider = provider
+        self.maximum_requests = maximum_requests
+        self.requests_used = 0
+
+    def get(
+        self,
+        endpoint: str,
+        parameters: Mapping[str, Any],
+        *,
+        purpose: str,
+        priority: Priority,
+        job_run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self.requests_used >= self.maximum_requests:
+            raise QuotaExhaustedError("Backfill per-run request cap reached")
+        self.requests_used += 1
+        return self.provider.get(
+            endpoint,
+            parameters,
+            purpose=purpose,
+            priority=priority,
+            job_run_id=job_run_id,
+        )
 
 
 class BackfillPlanner:

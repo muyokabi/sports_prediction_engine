@@ -33,16 +33,30 @@ class ModelConfig(BaseModel):
     random_seed: int = 20261007
     cpu_threads: PositiveInt = 2
     time_decay_half_life_days: PositiveFloat = 365.0
+    minimum_team_history: PositiveInt = 10
+    require_calibration_for_betting: bool = True
+    minimum_prediction_confidence: float = Field(default=0.40, ge=0, le=1)
 
 
 class BackfillConfig(BaseModel):
-    maximum_requests_per_run: int = Field(default=40, ge=0)
+    maximum_requests_per_run: int = Field(default=1000, ge=0)
     repair_attempt_limit: PositiveInt = 3
 
 
 class OddsConfig(BaseModel):
     target_days_ahead: PositiveInt = 1
     snapshot_dedupe_seconds: int = Field(default=60, ge=0)
+    maximum_age_minutes: PositiveInt = 180
+
+
+class RiskConfig(BaseModel):
+    maximum_bankroll_fraction_per_wager: float = Field(default=0.01, gt=0, le=1)
+    maximum_daily_exposure: float = Field(default=0.05, gt=0, le=1)
+    maximum_simultaneous_recommendations: PositiveInt = 5
+    fractional_kelly: float = Field(default=0.25, ge=0, le=1)
+    hard_stake_cap: float = Field(default=0.01, gt=0, le=1)
+    minimum_probability_advantage: float = Field(default=0.03, ge=0, le=1)
+    minimum_expected_value: float = Field(default=0.0, ge=0)
 
 
 class ApplicationMode(StrEnum):
@@ -69,6 +83,7 @@ class AppConfig(BaseModel):
     models: ModelConfig = ModelConfig()
     backfill: BackfillConfig = BackfillConfig()
     odds: OddsConfig = OddsConfig()
+    risk: RiskConfig = RiskConfig()
     provider_access: ProviderAccessConfig = ProviderAccessConfig()
 
     def absolute_paths(self) -> "AppConfig":

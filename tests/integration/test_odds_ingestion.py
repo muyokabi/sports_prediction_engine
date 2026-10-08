@@ -3,6 +3,8 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from sports_engine.core.enums import Priority
 from sports_engine.sports.football.ingestion.odds import OddsIngestionService
 from sports_engine.sports.football.normalization.fixtures import normalize_fixture
@@ -112,6 +114,16 @@ def test_odds_snapshot_preserves_lines_probabilities_and_deduplicates(tmp_path: 
     connection.close()
 
 
+def test_invalid_provider_prices_are_excluded_without_losing_valid_selections() -> None:
+    payload = _odds(100)
+    payload["bookmakers"][0]["bets"][0]["values"].extend(
+        [{"value": "Invalid", "odd": "0"}, {"value": "Malformed", "odd": "n/a"}]
+    )
+    prices = normalize_odds(payload)
+    assert len(prices) == 4
+    assert all(price.decimal_odds > 1 for price in prices)
+
+
 def test_odds_service_consumes_all_pages_and_skips_unknown_fixtures(tmp_path: Path) -> None:
     connection = _database(tmp_path)
 
@@ -135,4 +147,36 @@ def test_odds_service_consumes_all_pages_and_skips_unknown_fixtures(tmp_path: Pa
         raw_path_resolver=lambda purpose, run_id: "odds.json.gz",
     ).run(date(2026, 10, 8))
     assert (result.payloads_seen, result.snapshots_written, result.fixtures_not_in_ledger) == (2, 1, 1)
+    connection.close()
+
+
+def test_odds_service_restarts_safely_after_page_interruption(tmp_path: Path) -> None:
+    connection = _database(tmp_path)
+
+    class InterruptedProvider:
+        def get_all_pages(self, *args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
+            yield _odds(100)
+            raise RuntimeError("simulated failure between pages")
+
+    service = OddsIngestionService(
+        connection,
+        InterruptedProvider(),
+        raw_path_resolver=lambda purpose, run_id: "odds-page-1.json.gz",
+    )
+    with pytest.raises(RuntimeError, match="between pages"):
+        service.run(date(2026, 10, 8))
+    assert connection.execute("SELECT count(*) FROM odds_snapshots").fetchone() == (1,)
+
+    class ResumedProvider:
+        def get_all_pages(self, *args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
+            yield _odds(100)
+            yield _odds(101)
+
+    result = OddsIngestionService(
+        connection,
+        ResumedProvider(),
+        raw_path_resolver=lambda purpose, run_id: "odds-resumed.json.gz",
+    ).run(date(2026, 10, 8))
+    assert result.payloads_seen == 2
+    assert connection.execute("SELECT count(*) FROM odds_snapshots").fetchone() == (2,)
     connection.close()

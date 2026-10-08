@@ -8,6 +8,11 @@ def normalize_player_statistics(payload: dict[str, Any]) -> list[PlayerMatchStat
     result: list[PlayerMatchStatistics] = []
     for item in payload.get("players", []):
         player = item["player"]
+        # API-Football can emit multiple distinct placeholder players with id=0.
+        # They cannot be assigned a stable canonical identity; retain them in raw
+        # lineage but exclude them from the canonical player-stat grain.
+        if not isinstance(player.get("id"), int) or player["id"] <= 0:
+            continue
         statistics = item.get("statistics") or []
         if statistics:
             result.append(

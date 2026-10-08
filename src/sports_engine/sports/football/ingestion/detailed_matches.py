@@ -49,8 +49,13 @@ class DetailedMatchIngestionService:
 
     def run(self, fixture_ids: Iterable[int], *, job_run_id: str | None = None) -> DetailedIngestionResult:
         batches = list(fixture_batches(fixture_ids))
+        batch_signature = hashlib.sha256(
+            ",".join(str(value) for batch in batches for value in batch).encode()
+        ).hexdigest()
         saved = checkpoints.get(self.connection, self.checkpoint_key)
-        start = int(saved) if saved is not None else 0
+        start = (
+            int(saved.get("index", 0)) if isinstance(saved, dict) and saved.get("signature") == batch_signature else 0
+        )
         if start < 0 or start >= len(batches):
             start = 0
         received = eligible = quarantined = 0
@@ -81,10 +86,10 @@ class DetailedMatchIngestionService:
                         raw_path = self.raw_path_resolver(fallback_purpose, job_run_id)
                         packages.extend((payload, raw_path) for payload in fallback_rows)
                 except QuotaExhaustedError:
-                    checkpoints.put(self.connection, self.checkpoint_key, index, job_run_id)
+                    self._save_checkpoint(index, batch_signature, job_run_id)
                     return DetailedIngestionResult(False, received, eligible, quarantined, index)
             except QuotaExhaustedError:
-                checkpoints.put(self.connection, self.checkpoint_key, index, job_run_id)
+                self._save_checkpoint(index, batch_signature, job_run_id)
                 return DetailedIngestionResult(False, received, eligible, quarantined, index)
             for payload, raw_path in packages:
                 received += 1
@@ -97,7 +102,7 @@ class DetailedMatchIngestionService:
                     )
                     assessment = assess_match_package(payload)
                 except QuotaExhaustedError:
-                    checkpoints.put(self.connection, self.checkpoint_key, index, job_run_id)
+                    self._save_checkpoint(index, batch_signature, job_run_id)
                     return DetailedIngestionResult(False, received - 1, eligible, quarantined, index)
                 if assessment.eligibility != Eligibility.ML_ELIGIBLE:
                     self._quarantine(payload, assessment.missing, raw_path)
@@ -132,9 +137,17 @@ class DetailedMatchIngestionService:
                                 attempt[1],
                             ],
                         )
-                checkpoints.put(self.connection, self.checkpoint_key, index + 1, job_run_id)
-        checkpoints.put(self.connection, self.checkpoint_key, 0, job_run_id)
+                self._save_checkpoint(index + 1, batch_signature, job_run_id)
+        self._save_checkpoint(0, batch_signature, job_run_id)
         return DetailedIngestionResult(True, received, eligible, quarantined, 0)
+
+    def _save_checkpoint(self, index: int, signature: str, job_run_id: str | None) -> None:
+        checkpoints.put(
+            self.connection,
+            self.checkpoint_key,
+            {"index": index, "signature": signature},
+            job_run_id,
+        )
 
     def _record_repair_attempt(self, fixture_id: str, missing: tuple[str, ...]) -> tuple[int, datetime]:
         row = self.connection.execute(

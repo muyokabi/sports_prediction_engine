@@ -31,27 +31,10 @@ MANDATORY_TEAM_STATISTICS = (
     "Passes accurate",
     "Passes %",
 )
-MANDATORY_PLAYER_PATHS = (
-    ("games", "minutes"),
-    ("games", "rating"),
-    ("shots", "total"),
-    ("shots", "on"),
-    ("passes", "total"),
-    ("passes", "key"),
-    ("tackles", "total"),
-    ("tackles", "interceptions"),
-    ("duels", "total"),
-    ("duels", "won"),
-    ("dribbles", "attempts"),
-    ("dribbles", "success"),
-    ("fouls", "drawn"),
-    ("fouls", "committed"),
-    ("cards", "yellow"),
-    ("cards", "red"),
-    ("penalty", "scored"),
-    ("penalty", "missed"),
-    ("penalty", "saved"),
-)
+# Paid/current-season qualification established that API-Football uses NULL for
+# unperformed actions and non-applicable roles. Participation identity and
+# minutes are the required core; analytic/action fields remain nullable.
+PLAYER_REQUIRED_CORE = (("games", "minutes"),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,20 +72,39 @@ def _nested_value(payload: dict[str, Any], path: tuple[str, str]) -> Any:
     return section.get(path[1]) if isinstance(section, dict) else None
 
 
-def _player_statistics_complete(players: object) -> bool:
+def _player_statistics_complete(payload: dict[str, Any]) -> bool:
+    players = payload.get("players")
     if not isinstance(players, list) or len(players) < 2:
         return False
+    required_participants: set[int] = set()
+    lineups = payload.get("lineups")
+    if not isinstance(lineups, list) or len(lineups) < 2:
+        return False
+    for lineup in lineups:
+        for item in lineup.get("startXI") or []:
+            player = item.get("player") or {}
+            if player.get("id") is not None:
+                required_participants.add(int(player["id"]))
+    for event in payload.get("events") or []:
+        if str(event.get("type", "")).lower() in {"subst", "substitution"}:
+            incoming = event.get("assist") or {}
+            if incoming.get("id") is not None:
+                required_participants.add(int(incoming["id"]))
+    observed_participants: set[int] = set()
     for team in players:
         rows = team.get("players")
         if not isinstance(rows, list) or not rows:
             return False
         for row in rows:
+            player = row.get("player") or {}
             statistics = row.get("statistics")
             if not isinstance(statistics, list) or not statistics:
-                return False
-            if any(_nested_value(statistics[0], path) is None for path in MANDATORY_PLAYER_PATHS):
-                return False
-    return True
+                continue
+            if player.get("id") is not None and all(
+                _nested_value(statistics[0], path) is not None for path in PLAYER_REQUIRED_CORE
+            ):
+                observed_participants.add(int(player["id"]))
+    return bool(required_participants) and required_participants <= observed_participants
 
 
 def assess_match_package(payload: dict[str, Any]) -> QualityAssessment:
@@ -113,7 +115,7 @@ def assess_match_package(payload: dict[str, Any]) -> QualityAssessment:
     event_state = CompletenessState.COMPLETE if isinstance(events, list) else CompletenessState.INCOMPLETE
     lineups_complete = _lineups_complete(payload.get("lineups"))
     team_stats_complete = _team_statistics_complete(payload.get("statistics"))
-    player_stats_complete = _player_statistics_complete(payload.get("players"))
+    player_stats_complete = _player_statistics_complete(payload)
     components = {
         "fixture_metadata": CompletenessState.COMPLETE
         if fixture.get("id") and fixture.get("date")

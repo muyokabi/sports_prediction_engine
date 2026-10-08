@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
@@ -34,6 +35,12 @@ class LogisticProbabilityModel:
         )
 
     def fit(self, features: np.ndarray, targets: np.ndarray) -> Self:
+        self.estimator.fit(features, targets)
+        return self
+
+    def fit_incremental(self, features: np.ndarray, targets: np.ndarray, parent: "LogisticProbabilityModel") -> Self:
+        self.estimator = deepcopy(parent.estimator)
+        self.estimator.named_steps["model"].set_params(warm_start=True, random_state=self.random_seed)
         self.estimator.fit(features, targets)
         return self
 

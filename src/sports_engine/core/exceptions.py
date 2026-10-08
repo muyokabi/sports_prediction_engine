@@ -41,5 +41,9 @@ class DataQualityError(SportsEngineError):
     """Normalized data failed mandatory quality rules."""
 
 
+class NoEligibleModelError(SportsEngineError):
+    """No production-eligible champion model is available."""
+
+
 class LeakageError(SportsEngineError):
     """A dataset violates point-in-time constraints."""

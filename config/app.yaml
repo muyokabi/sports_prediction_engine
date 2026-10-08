@@ -1,4 +1,4 @@
-mode: development
+mode: production
 timezone: Africa/Nairobi
 data_dir: data
 artifacts_dir: artifacts
@@ -22,12 +22,24 @@ models:
   random_seed: 20261007
   cpu_threads: 2
   time_decay_half_life_days: 365.0
+  minimum_team_history: 10
+  require_calibration_for_betting: true
+  minimum_prediction_confidence: 0.40
 backfill:
-  maximum_requests_per_run: 40
+  maximum_requests_per_run: 1000
   repair_attempt_limit: 3
 odds:
   target_days_ahead: 1
   snapshot_dedupe_seconds: 60
+  maximum_age_minutes: 180
+risk:
+  maximum_bankroll_fraction_per_wager: 0.01
+  maximum_daily_exposure: 0.05
+  maximum_simultaneous_recommendations: 5
+  fractional_kelly: 0.25
+  hard_stake_cap: 0.01
+  minimum_probability_advantage: 0.03
+  minimum_expected_value: 0.0
 provider_access:
   replay_season: 2024
 

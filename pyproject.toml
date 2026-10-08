@@ -47,6 +47,15 @@ addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 markers = ["live: tests that consume live provider quota"]
 
+[tool.coverage.run]
+branch = true
+source = ["sports_engine"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_also = ["if TYPE_CHECKING:", "if __name__ == .__main__.:"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120

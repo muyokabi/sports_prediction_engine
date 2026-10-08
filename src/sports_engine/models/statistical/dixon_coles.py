@@ -26,6 +26,13 @@ class DixonColesModel(PoissonModel):
         return self._fit_rho([(home, away, hg, ag) for home, away, hg, ag, _ in matches])
 
     def _fit_rho(self, matches: list[tuple[str, str, int, int]]) -> "DixonColesModel":
+        rates = [self.expected_goals(home, away) for home, away, _, _ in matches]
+        maximum_rate = max(max(home_rate, away_rate) for home_rate, away_rate in rates)
+        maximum_product = max(home_rate * away_rate for home_rate, away_rate in rates)
+        lower = max(-0.25, -0.999 / max(maximum_rate, 1e-12))
+        upper = min(0.25, 0.999 / max(maximum_product, 1e-12), 0.999)
+        if lower >= upper:
+            raise RuntimeError("No valid Dixon-Coles rho interval preserves positive probability mass")
 
         def objective(rho: float) -> float:
             loss = 0.0
@@ -35,7 +42,7 @@ class DixonColesModel(PoissonModel):
                 loss -= np.log(max(adjustment, 1e-12))
             return float(loss)
 
-        fitted = minimize_scalar(objective, bounds=(-0.25, 0.25), method="bounded")
+        fitted = minimize_scalar(objective, bounds=(lower, upper), method="bounded")
         if not fitted.success:
             raise RuntimeError("Dixon-Coles rho optimization failed")
         self.rho = float(fitted.x)
@@ -46,6 +53,7 @@ class DixonColesModel(PoissonModel):
         home_rate, away_rate = self.expected_goals(home, away)
         for home_goals, away_goals in ((0, 0), (0, 1), (1, 0), (1, 1)):
             matrix[home_goals, away_goals] *= self._tau(home_goals, away_goals, home_rate, away_rate, self.rho)
+        matrix = np.clip(matrix, 0.0, None)
         return matrix / matrix.sum()
 
     @staticmethod

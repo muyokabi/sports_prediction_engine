@@ -30,6 +30,10 @@ class CatBoostProbabilityModel:
         self.estimator.fit(features, targets)
         return self
 
+    def fit_incremental(self, features: np.ndarray, targets: np.ndarray, parent: "CatBoostProbabilityModel") -> Self:
+        self.estimator.fit(features, targets, init_model=parent.estimator)
+        return self
+
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
         return np.asarray(self.estimator.predict_proba(features))
 

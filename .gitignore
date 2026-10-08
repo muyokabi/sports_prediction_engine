@@ -16,6 +16,11 @@ artifacts/models/**
 artifacts/evaluations/**
 artifacts/backtests/**
 artifacts/reports/**
+artifacts/prepayment-backup*/**
+artifacts/post-upgrade-backup*/**
+artifacts/backups/**
+artifacts/test-tmp/**
+artifacts/build-final/**
 state/**
 logs/**
 !**/.gitkeep

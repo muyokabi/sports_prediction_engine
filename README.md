@@ -57,7 +57,8 @@ uv run sports-engine football reconcile
 uv run sports-engine football seasons
 uv run sports-engine football season-rollover
 uv run sports-engine football odds tomorrow
-uv run sports-engine football quality
+uv run sports-engine football quality --summary --detailed
+uv run sports-engine football quality-soak --leagues 3 --fixtures-per-league 2
 
 # Provider state (status is quota-free; current-season probing is explicit)
 uv run sports-engine api capabilities
@@ -81,8 +82,14 @@ uv run sports-engine backtest --all
 uv run sports-engine predict tomorrow
 uv run sports-engine models list
 uv run sports-engine models leaderboard
+uv run sports-engine models reliability
 uv run sports-engine models promote <candidate-version>
 uv run sports-engine models reject <candidate-version>
+
+# Operational assurance
+uv run sports-engine data integrity
+uv run sports-engine data backup D:\sports-engine-backups\2026-10-07
+uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-07
 ```
 
 Commands support `--help`; read-only status commands support `--json` where useful. Live commands fail clearly if credentials or prerequisite data are absent. They never manufacture data or probabilities.
@@ -101,13 +108,13 @@ Unused quota is acceptable.
 
 ## Development replay and production ledger
 
-`config/app.yaml` explicitly selects `development` or `production`. Development uses the configured accessible replay season (currently 2024) and labels its competition-season rows `replay`. Production always targets the provider's current season and never silently falls back to historical data. The current Free subscription leaves production qualification at `BLOCKED_BY_PROVIDER_PLAN`; this does not block replay implementation or offline verification.
+`config/app.yaml` explicitly selects `development` or `production`. Development uses the configured accessible replay season (currently 2024) and labels its competition-season rows `replay`. Production always targets the provider's current season and never silently falls back to historical data. The connected subscription passed controlled current-season qualification on 2026-10-07, so the repository is now in production mode; replay records remain separate and are never promoted into the official ledger.
 
-`doctor --connectivity` refreshes quota-free subscription state without repeatedly probing inaccessible current-season data. A current-season data call occurs only with `--verify-current-season` or after a genuine subscription-plan change is detected. Replay records are never presented as the official live ledger.
+`doctor --connectivity` refreshes subscription and quota state. A current-season qualification call occurs only with `--verify-current-season` or after a genuine subscription-plan change is detected. Quota enforcement uses provider-reported status and response headers, never a plan-name lookup. Replay records are never presented as the official live ledger.
 
 ## Data-quality policy
 
-Scores alone do not make a match trainable. The completeness ledger independently tracks metadata, scores, events, goals/assists/cards/substitutions, both lineups and benches, both team-stat rows, and both player-stat groups. Unknown upstream values remain `NULL`; known zero remains `0`. Final eligibility is `ML_ELIGIBLE`, `NOT_ML_ELIGIBLE`, or `PENDING_REPAIR`. Incomplete/malformed packages are recorded in `data_quality_issues` and `data/quarantine` with bounded retries.
+Scores alone do not make a match trainable. The completeness ledger independently tracks metadata, scores, events, goals/assists/cards/substitutions, both lineups and benches, both team-stat rows, and both player-stat groups. Every known starter and substitution entrant must have a player-stat row with non-null minutes. Unused substitutes do not require match-performance statistics, and action/role-specific fields remain nullable. Unknown upstream values remain `NULL`; known zero remains `0`. Final eligibility is `ML_ELIGIBLE`, `NOT_ML_ELIGIBLE`, or `PENDING_REPAIR`. Incomplete/malformed packages are recorded in `data_quality_issues` and `data/quarantine` with bounded retries.
 
 Every feature row has a prediction timestamp. Only source observations strictly available by that timestamp may contribute. Official evaluation is chronological or walk-forward; random splitting is forbidden.
 
@@ -115,11 +122,16 @@ Training selects a named or latest registered feature dataset, preserves its sch
 
 Backtests consume persisted historical predictions and the latest real odds snapshot available at each prediction timestamp. A simulated wager requires both a configured probability difference and positive expected value; profitability never substitutes for probability-quality promotion criteria.
 
+Model probabilities and betting decisions are separate records. Conservative configurable evidence gates cover training size, class counts, chronological validation/test size, team history, calibration, confidence, market availability and odds freshness. A failed gate produces a machine-readable `NO_BET` reason such as `NO_ACTION_STALE_ODDS`; it never forces a wager. Fractional-Kelly sizing is optional and remains bounded by per-wager, daily-exposure and simultaneous-recommendation caps. There is no automated bookmaker execution.
+
 Injury availability is append-only and point-in-time: a zero is trusted only when a dated injury collection completed before the prediction cutoff. Lineup strength is populated only from a lineup observation already known at that cutoff. Feature datasets are immutable, content-addressed Parquet artifacts with persisted schema, data hash, cutoff range, and configuration.
 
 ## Daily routine
 
-`sports-engine daily` acquires a local lock, records a job run, checks quota, discovers yesterday globally, filters admitted competitions, enriches new finals in ≤20-ID batches, validates and commits packages, discovers tomorrow, follows all odds pages, writes append-only price snapshots, predicts only when artifacts and data qualify, spends safe surplus on backfill, checkpoints, and prints a concise summary. Re-running does not duplicate canonical rows.
+`sports-engine daily` acquires a local lock, records a job run, refreshes provider state, and resumes from the last successfully checkpointed discovery date through tomorrow (up to eight dates per run). It filters admitted competitions, enriches new finals in ≤20-ID batches, validates and commits packages, follows all odds pages, writes append-only price snapshots, predicts only when artifacts and data qualify, and spends only safe surplus on backfill. A date is checkpointed only after its enrichment succeeds. Re-running after a crash or missed schedule is idempotent.
+
+For unattended Windows operation, exact Task Scheduler configuration, recovery procedures and alert categories, see
+[the operations runbook](docs/operations/RUNBOOK.md).
 
 ## Season rollover
 
@@ -143,22 +155,20 @@ logs/         rotating operational logs
 
 ## Backup
 
-Stop running jobs before copying the DuckDB file. Back up `data/raw`, `data/warehouse/sports.duckdb`, `data/parquet`, `artifacts/models`, and `config`. A local PowerShell example:
+Stop running jobs, create a coherent backup, then verify it in isolation:
 
 ```powershell
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$destination = Join-Path 'D:\sports-engine-backups' $stamp
-New-Item -ItemType Directory -Path $destination
-Copy-Item data\raw, data\parquet, artifacts\models, config -Destination $destination -Recurse
-Copy-Item data\warehouse\sports.duckdb -Destination $destination
+uv run sports-engine data backup D:\sports-engine-backups\2026-10-07
+uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-07
 ```
 
-Test restoration periodically into a separate directory and run `sports-engine doctor`. Raw payloads and historical odds/predictions are append-only; do not prune them without an explicit retention and audit decision.
+The manifest hashes every copied file, verifies schema and row counts, opens the copied DuckDB read-only, and runs relational/artifact integrity checks without touching the live database. Raw payloads and historical odds/predictions are append-only; do not prune them without an explicit retention and audit decision.
 
 ## Development and verification
 
 ```powershell
 uv run pytest
+uv run pytest --cov=sports_engine --cov-branch --cov-report=term --cov-report=json:artifacts/reports/coverage.json
 uv run ruff check .
 uv run mypy
 ```

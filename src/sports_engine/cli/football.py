@@ -1,4 +1,5 @@
 import json
+from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -14,7 +15,7 @@ from sports_engine.core.paths import project_root
 from sports_engine.core.telemetry import JobSummary
 from sports_engine.orchestration.locks import FileLock
 from sports_engine.orchestration.runner import job_run
-from sports_engine.sports.football.ingestion.backfill import BackfillPlanner
+from sports_engine.sports.football.ingestion.backfill import BackfillPlanner, RequestCappedProvider
 from sports_engine.sports.football.ingestion.coverage_gate import CoverageAuditService
 from sports_engine.sports.football.ingestion.daily_update import DailyUpdateService
 from sports_engine.sports.football.ingestion.detailed_matches import DetailedMatchIngestionService
@@ -22,6 +23,9 @@ from sports_engine.sports.football.ingestion.injuries import InjuryIngestionServ
 from sports_engine.sports.football.ingestion.odds import OddsIngestionService
 from sports_engine.sports.football.ingestion.reconciliation import FixtureReconciliationService
 from sports_engine.sports.football.ingestion.season_bootstrap import SeasonBootstrapService
+from sports_engine.sports.football.quality.report import quality_details, quality_summary
+from sports_engine.sports.football.quality.soak import CompletenessSoakService
+from sports_engine.training.feedback import refresh_performance_rollups, settle_completed_predictions
 
 app = typer.Typer(help="Football ingestion and quality workflows.")
 coverage_app = typer.Typer(help="Competition coverage admission gate.")
@@ -175,9 +179,10 @@ def backfill() -> None:
                     repair_attempt_limit=config.backfill.repair_attempt_limit,
                 ).plan(ledger_mode=ledger_mode)
                 if plan.fixture_ids:
+                    capped_client = RequestCappedProvider(client, plan.request_budget)
                     result = DetailedMatchIngestionService(
                         connection,
-                        client,
+                        capped_client,
                         config.data_dir / "quarantine",
                     ).run(plan.fixture_ids, job_run_id=run_id)
                 else:
@@ -242,6 +247,7 @@ def enrich(limit: int = typer.Option(20, min=1, max=200)) -> None:
 def daily(
     as_of: str | None = typer.Option(None, help="Operational date (required only to override replay time)."),
 ) -> None:
+    from sports_engine.markets.decision import EvidencePolicy, RiskPolicy
     from sports_engine.sports.football.prediction.service import PredictionService
 
     config = load_config()
@@ -274,7 +280,7 @@ def daily(
                     client,
                     config.data_dir / "quarantine",
                     repair_attempt_limit=config.backfill.repair_attempt_limit,
-                ).run(
+                ).run_catch_up(
                     operational_date,
                     ledger_mode=ledger_mode,
                     job_run_id=run_id,
@@ -312,8 +318,9 @@ def daily(
                 ).plan(ledger_mode=ledger_mode)
                 backfill_result = None
                 if backfill_plan.fixture_ids:
+                    capped_client = RequestCappedProvider(client, backfill_plan.request_budget)
                     backfill_result = DetailedMatchIngestionService(
-                        connection, client, config.data_dir / "quarantine"
+                        connection, capped_client, config.data_dir / "quarantine"
                     ).run(backfill_plan.fixture_ids, job_run_id=run_id)
             summary.fixtures_discovered = result.relevant_fixtures
             summary.fixtures_updated = result.fixture_records_written
@@ -324,6 +331,8 @@ def daily(
                 backfill_result.fixtures_quarantined if backfill_result else 0
             )
             summary.odds_snapshots_written = odds_result.snapshots_written if odds_result else 0
+            settlement_result = settle_completed_predictions(connection)
+            refresh_performance_rollups(connection)
             if injury_result and injury_result.ignored_unknown_teams:
                 summary.warnings.append(f"{injury_result.ignored_unknown_teams} injury rows ignored for unknown teams")
             champion = connection.execute("SELECT count(*) FROM model_runs WHERE status='champion'").fetchone()
@@ -341,6 +350,25 @@ def daily(
                     windows=config.features.windows,
                     exponential_half_life=config.features.exponential_half_life,
                     prediction_lead_hours=config.features.prediction_lead_hours,
+                    maximum_odds_age_minutes=config.odds.maximum_age_minutes,
+                    evidence_policy=EvidencePolicy(
+                        0,
+                        0,
+                        0,
+                        0,
+                        config.models.minimum_team_history,
+                        config.models.require_calibration_for_betting,
+                        config.models.minimum_prediction_confidence,
+                    ),
+                    risk_policy=RiskPolicy(
+                        config.risk.maximum_bankroll_fraction_per_wager,
+                        config.risk.maximum_daily_exposure,
+                        config.risk.maximum_simultaneous_recommendations,
+                        config.risk.fractional_kelly,
+                        config.risk.hard_stake_cap,
+                        config.risk.minimum_probability_advantage,
+                        config.risk.minimum_expected_value,
+                    ),
                 ).predict(odds_date, ledger_mode=ledger_mode, timezone=config.timezone)
     finally:
         connection.close()
@@ -352,6 +380,7 @@ def daily(
         f"quarantined={result.enrichment.fixtures_quarantined} "
         f"backfill={backfill_result.fixtures_eligible if backfill_result else 0} "
         f"predictions={prediction_result.fixture_count if prediction_result else 0}"
+        f" settled_predictions={settlement_result.predictions_settled}"
     )
 
 
@@ -424,8 +453,129 @@ def season_rollover() -> None:
 
 
 @app.command("quality")
-def quality() -> None:
-    _state_summary("Quality")
+def quality(
+    summary: bool = typer.Option(True, "--summary/--no-summary"),
+    detailed: bool = typer.Option(False, "--detailed"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    config = load_config()
+    connection = open_database(config)
+    summaries = quality_summary(connection) if summary else []
+    details = quality_details(connection) if detailed else []
+    connection.close()
+    if as_json:
+        console.print_json(
+            json.dumps(
+                {
+                    "summary": [asdict(item) for item in summaries],
+                    "details": details,
+                },
+                default=str,
+            )
+        )
+        return
+    if summary:
+        table = Table(
+            "Competition",
+            "Season",
+            "Ledger",
+            "Total",
+            "Final",
+            "Enriched",
+            "Eligible",
+            "Repair",
+            "Quarantine",
+            "Unavailable",
+            "Complete %",
+            "Common missing",
+        )
+        for item in summaries:
+            table.add_row(
+                item.competition,
+                str(item.season),
+                item.ledger_mode,
+                str(item.total),
+                str(item.completed),
+                str(item.enriched),
+                str(item.ml_eligible),
+                str(item.pending_repair),
+                str(item.quarantined),
+                str(item.unavailable_components),
+                f"{item.completeness_percentage:.1f}",
+                ", ".join(f"{name}:{count}" for name, count in item.common_missing) or "-",
+            )
+        console.print(table)
+    if detailed:
+        table = Table("Competition", "Season", "Fixture", "Component", "State")
+        for row in details:
+            table.add_row(*(str(value) for value in row))
+        console.print(table)
+
+
+@app.command("quality-soak")
+def quality_soak(
+    leagues: int = typer.Option(3, min=1, max=10),
+    fixtures_per_league: int = typer.Option(2, min=1, max=5),
+) -> None:
+    """Run a quota-conscious real-provider completeness sample."""
+    config = load_config()
+    ledger_mode, _ = _ledger_target(config)
+    connection = open_database(config)
+    summary = JobSummary()
+    try:
+        with job_run(connection, "football.quality_soak", summary, config.mode.value) as run_id:
+            with provider_client(config, connection) as client:
+                capabilities = client.get_status(purpose="quality_soak_status", job_run_id=run_id)
+                result = CompletenessSoakService(
+                    connection,
+                    client,
+                    config.data_dir / "quarantine",
+                    config.artifacts_dir / "reports",
+                ).run(
+                    ledger_mode=ledger_mode,
+                    league_limit=leagues,
+                    fixtures_per_league=fixtures_per_league,
+                    repair_attempt_limit=config.backfill.repair_attempt_limit,
+                    job_run_id=run_id,
+                )
+                if client.capabilities is not None:
+                    capabilities = client.capabilities
+            summary.fixtures_enriched = result.ml_eligible
+            summary.fixtures_quarantined = result.quarantined
+    finally:
+        connection.close()
+    table = Table(
+        "Competition",
+        "Season",
+        "Sampled",
+        "Assessed",
+        "Unassessed",
+        "Eligible",
+        "Quarantine",
+        "Repairs",
+        "Missing",
+        "Nulls",
+    )
+    for item in result.leagues:
+        table.add_row(
+            item.competition,
+            str(item.season),
+            str(item.fixtures_sampled),
+            str(item.fixtures_assessed),
+            str(item.fixtures_unassessed),
+            str(item.ml_eligible),
+            str(item.quarantined),
+            f"{item.repairs_succeeded}/{item.repairs_attempted}",
+            ", ".join(f"{key}:{value}" for key, value in item.missing_components.items()) or "-",
+            ", ".join(f"{key}:{value}" for key, value in item.provider_nulls.items() if value) or "-",
+        )
+    console.print(table)
+    console.print(
+        f"Soak sampled={result.fixtures_sampled} assessed={result.fixtures_assessed} "
+        f"unassessed={result.fixtures_unassessed} eligible={result.ml_eligible} "
+        f"quarantined={result.quarantined} daily_remaining={capabilities.daily_remaining} "
+        f"report={result.report_path}"
+    )
 
 
 @odds_app.command("tomorrow")

@@ -1,9 +1,13 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
+from sports_engine.core.enums import Priority
+from sports_engine.core.exceptions import QuotaExhaustedError
 from sports_engine.providers.api_football.quota import QuotaObservation
 from sports_engine.quota.budget import QuotaBudget, QuotaPolicy
-from sports_engine.sports.football.ingestion.backfill import BackfillPlanner
+from sports_engine.sports.football.ingestion.backfill import BackfillPlanner, RequestCappedProvider
 from sports_engine.sports.football.normalization.fixtures import normalize_fixture
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
@@ -65,3 +69,16 @@ def test_backfill_uses_dynamic_surplus_and_excludes_exhausted_repairs(tmp_path: 
     assert plan.candidate_count == 1
     assert plan.fixture_ids == (100,)
     connection.close()
+
+
+def test_request_cap_counts_batch_and_targeted_repairs() -> None:
+    class Provider:
+        def get(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return []
+
+    capped = RequestCappedProvider(Provider(), 2)  # type: ignore[arg-type]
+    for purpose in ("batch", "repair"):
+        assert capped.get("/fixtures", {}, purpose=purpose, priority=Priority.P3) == []
+    with pytest.raises(QuotaExhaustedError, match="per-run request cap"):
+        capped.get("/fixtures", {}, purpose="overflow", priority=Priority.P3)
+    assert capped.requests_used == 2

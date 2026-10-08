@@ -6,8 +6,8 @@ from typing import Any, Self
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import gammaln
-from scipy.stats import poisson
 
+from sports_engine.markets.score_distribution import ScoreDistribution
 from sports_engine.models.serialization import load_pickle, save_pickle
 
 
@@ -16,7 +16,10 @@ class PoissonModel:
     """Regularized attack/defence Poisson model with an explicit home effect."""
 
     maximum_goals: int = 10
-    regularization: float = 0.01
+    # Sparse, pooled multi-competition data needs strong partial pooling.  A
+    # near-zero penalty lets one-appearance teams acquire extreme parameters
+    # and destroys chronological generalisation.
+    regularization: float = 10.0
     team_attack: dict[str, float] = field(default_factory=dict)
     team_defense: dict[str, float] = field(default_factory=dict)
     intercept: float = 0.0
@@ -49,15 +52,15 @@ class PoissonModel:
             raise ValueError("At least one completed match is required")
         teams = sorted({row[0] for row in matches} | {row[1] for row in matches})
         index = {team: position for position, team in enumerate(teams)}
-        home = np.asarray([index[row[0]] for row in matches])
-        away = np.asarray([index[row[1]] for row in matches])
+        home = np.asarray([index[row[0]] for row in matches], dtype=int)
+        away = np.asarray([index[row[1]] for row in matches], dtype=int)
         home_goals = np.asarray([row[2] for row in matches], dtype=float)
         away_goals = np.asarray([row[3] for row in matches], dtype=float)
         count = len(teams)
         initial = np.zeros(count * 2 + 2)
         initial[-2] = np.log(max(float(np.mean(np.r_[home_goals, away_goals])), 0.1))
 
-        def objective(parameters: np.ndarray) -> float:
+        def objective(parameters: np.ndarray) -> tuple[float, np.ndarray]:
             attack = parameters[:count] - np.mean(parameters[:count])
             defense = parameters[count : count * 2] - np.mean(parameters[count : count * 2])
             intercept, home_effect = parameters[-2:]
@@ -72,9 +75,33 @@ class PoissonModel:
                 - gammaln(away_goals + 1)
             )
             penalty = self.regularization * float(np.sum(attack**2) + np.sum(defense**2))
-            return -float(np.sum(weights * log_likelihood)) + penalty
+            residual_home = weights * (home_rate - home_goals)
+            residual_away = weights * (away_rate - away_goals)
+            attack_gradient = np.zeros(count)
+            defense_gradient = np.zeros(count)
+            np.add.at(attack_gradient, home, residual_home)
+            np.add.at(attack_gradient, away, residual_away)
+            np.add.at(defense_gradient, away, residual_home)
+            np.add.at(defense_gradient, home, residual_away)
+            attack_gradient += 2 * self.regularization * attack
+            defense_gradient += 2 * self.regularization * defense
+            attack_gradient -= np.mean(attack_gradient)
+            defense_gradient -= np.mean(defense_gradient)
+            gradient = np.r_[
+                attack_gradient,
+                defense_gradient,
+                float(np.sum(residual_home + residual_away)),
+                float(np.sum(residual_home)),
+            ]
+            return -float(np.sum(weights * log_likelihood)) + penalty, gradient
 
-        fitted = minimize(objective, initial, method="L-BFGS-B")
+        fitted = minimize(
+            objective,
+            initial,
+            method="L-BFGS-B",
+            jac=True,
+            options={"maxiter": 2_000, "maxfun": 100_000, "ftol": 1e-9},
+        )
         if not fitted.success:
             raise RuntimeError(f"Poisson optimization failed: {fitted.message}")
         attack = fitted.x[:count] - np.mean(fitted.x[:count])
@@ -95,9 +122,7 @@ class PoissonModel:
 
     def score_matrix(self, home: str, away: str) -> np.ndarray:
         home_rate, away_rate = self.expected_goals(home, away)
-        goals = np.arange(self.maximum_goals + 1)
-        matrix = np.outer(poisson.pmf(goals, home_rate), poisson.pmf(goals, away_rate))
-        return matrix / matrix.sum()
+        return ScoreDistribution.poisson(home_rate, away_rate).probabilities
 
     def predict_proba(self, fixtures: list[tuple[str, str]]) -> np.ndarray:
         rows = []

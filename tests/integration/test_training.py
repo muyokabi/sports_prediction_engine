@@ -12,11 +12,18 @@ from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
 
 
-def _dataset(connection: object, path: Path) -> None:
+def _dataset(
+    connection: object,
+    path: Path,
+    *,
+    row_count: int = 30,
+    name: str = "synthetic",
+    dataset_id: str = "10000000-0000-0000-0000-000000000001",
+) -> None:
     base = datetime(2025, 1, 1, tzinfo=UTC)
     results = [(2, 0, "HOME"), (1, 1, "DRAW"), (0, 2, "AWAY")]
     rows = []
-    for index in range(30):
+    for index in range(row_count):
         home_goals, away_goals, result = results[index % len(results)]
         rows.append(
             {
@@ -37,17 +44,17 @@ def _dataset(connection: object, path: Path) -> None:
             }
         )
     frame = pl.DataFrame(rows)
-    parquet = path / "training.parquet"
+    parquet = path / f"{name}.parquet"
     frame.write_parquet(parquet)
     connection.execute(
         "INSERT INTO feature_datasets VALUES (?, ?, current_timestamp, ?, ?, ?, ?, ?, ?)",
         [
-            "10000000-0000-0000-0000-000000000001",
-            "synthetic",
+            dataset_id,
+            name,
             base,
-            base + timedelta(days=29),
+            base + timedelta(days=row_count - 1),
             "schema-hash",
-            "dataset-hash",
+            f"dataset-hash-{name}",
             str(parquet),
             json.dumps({"ledger_mode": "replay"}),
         ],
@@ -63,12 +70,17 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
         model_type, dataset_name="synthetic"
     )
     row = connection.execute(
-        "SELECT model_type, status, training_dataset_hash, metrics, artifact_path FROM model_runs WHERE version=?",
+        "SELECT model_type, status, training_dataset_hash, metrics, artifact_path, evidence_state, "
+        "training_mode, observations_included FROM model_runs WHERE version=?",
         [result.version],
     ).fetchone()
-    assert row[:3] == (model_type, "candidate", "dataset-hash")
+    assert row[:3] == (model_type, "candidate", "dataset-hash-synthetic")
     assert json.loads(row[3])["test_rows"] == 6
     assert Path(row[4]).is_file()
+    assert row[5:] == ("RESEARCH_TRAINABLE", "full_refit", 18)
+    assert connection.execute(
+        "SELECT count(*) FROM model_evidence_assessments WHERE model_type=?", [model_type]
+    ).fetchone() == (2,)
     manifest = json.loads(result.artifact_path.with_suffix(".pkl.json").read_text())
     assert manifest["class_order"] == ["HOME", "DRAW", "AWAY"]
     assert manifest["random_seed"] == 7
@@ -101,12 +113,12 @@ def test_registry_promotion_retires_previous_champion(tmp_path: Path) -> None:
     second = trainer.train("poisson", dataset_name="synthetic")
     registry = ModelRegistry(connection)
     connection.execute(
-        "UPDATE model_runs SET metrics=? WHERE version=?",
+        "UPDATE model_runs SET metrics=?, evidence_state='PRODUCTION_ACTIONABLE' WHERE version=?",
         [json.dumps({"log_loss": 0.2, "brier": 0.2}), first.version],
     )
     registry.promote(first.version)
     connection.execute(
-        "UPDATE model_runs SET metrics=? WHERE version=?",
+        "UPDATE model_runs SET metrics=?, evidence_state='PRODUCTION_ACTIONABLE' WHERE version=?",
         [json.dumps({"log_loss": 0.1, "brier": 0.1}), second.version],
     )
     registry.promote(second.version)
@@ -114,6 +126,38 @@ def test_registry_promotion_retires_previous_champion(tmp_path: Path) -> None:
         (first.version, "retired"),
         (second.version, "champion"),
     ]
+    connection.close()
+
+
+@pytest.mark.parametrize("model_type", ["logistic", "catboost", "lightgbm"])
+def test_warm_start_creates_immutable_child_candidate(tmp_path: Path, model_type: str) -> None:
+    connection = connect(tmp_path / f"warm-{model_type}.duckdb")
+    migrate(connection)
+    _dataset(connection, tmp_path)
+    trainer = ModelTrainer(connection, tmp_path / "artifacts", random_seed=7, cpu_threads=1)
+    parent = trainer.train(model_type, dataset_name="synthetic")
+    parent_bytes = parent.artifact_path.read_bytes()
+    _dataset(
+        connection,
+        tmp_path,
+        row_count=90,
+        name="expanded",
+        dataset_id="20000000-0000-0000-0000-000000000002",
+    )
+    child = trainer.train(
+        model_type,
+        dataset_name="expanded",
+        training_mode="warm_start",
+        parent_model_version=parent.version,
+    )
+    assert child.version != parent.version
+    assert parent.artifact_path.read_bytes() == parent_bytes
+    row = connection.execute(
+        "SELECT parent_model_version, training_mode, hyperparameters FROM model_runs WHERE version=?",
+        [child.version],
+    ).fetchone()
+    assert row[:2] == (parent.version, "warm_start")
+    assert json.loads(row[2])["incremental_observations"] > 0
     connection.close()
 
 

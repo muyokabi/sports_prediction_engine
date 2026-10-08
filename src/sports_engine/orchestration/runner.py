@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -7,7 +8,10 @@ from datetime import UTC, datetime
 
 import duckdb
 
+from sports_engine.core.failures import classify_failure
 from sports_engine.core.telemetry import JobSummary
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -26,10 +30,19 @@ def job_run(
     try:
         yield job_run_id
     except Exception as exc:
+        category = classify_failure(exc, job_name)
         connection.execute(
-            "UPDATE job_runs SET finished_at=?, status='failed', metrics=?, error_message=? WHERE job_run_id=?",
-            [datetime.now(UTC), json.dumps(asdict(summary)), str(exc), job_run_id],
+            "UPDATE job_runs SET finished_at=?, status='failed', metrics=?, error_message=?, "
+            "error_category=? WHERE job_run_id=?",
+            [
+                datetime.now(UTC),
+                json.dumps(asdict(summary)),
+                str(exc),
+                category.value,
+                job_run_id,
+            ],
         )
+        logger.error("job_failed job=%s category=%s error=%s", job_name, category.value, exc)
         raise
     else:
         connection.execute(

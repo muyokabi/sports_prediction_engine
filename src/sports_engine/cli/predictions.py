@@ -7,6 +7,7 @@ from rich.table import Table
 
 from sports_engine.cli.runtime import open_database
 from sports_engine.core.config import ApplicationMode, load_config
+from sports_engine.core.exceptions import NoEligibleModelError
 
 console = Console()
 
@@ -14,6 +15,7 @@ console = Console()
 def predict_tomorrow(
     target_date: str | None = typer.Option(None, "--date", help="Override the prediction date."),
 ) -> None:
+    from sports_engine.markets.decision import EvidencePolicy, RiskPolicy
     from sports_engine.sports.football.prediction.service import PredictionService
 
     config = load_config()
@@ -29,10 +31,29 @@ def predict_tomorrow(
         windows=config.features.windows,
         exponential_half_life=config.features.exponential_half_life,
         prediction_lead_hours=config.features.prediction_lead_hours,
+        maximum_odds_age_minutes=config.odds.maximum_age_minutes,
+        evidence_policy=EvidencePolicy(
+            0,
+            0,
+            0,
+            0,
+            config.models.minimum_team_history,
+            config.models.require_calibration_for_betting,
+            config.models.minimum_prediction_confidence,
+        ),
+        risk_policy=RiskPolicy(
+            config.risk.maximum_bankroll_fraction_per_wager,
+            config.risk.maximum_daily_exposure,
+            config.risk.maximum_simultaneous_recommendations,
+            config.risk.fractional_kelly,
+            config.risk.hard_stake_cap,
+            config.risk.minimum_probability_advantage,
+            config.risk.minimum_expected_value,
+        ),
     )
     try:
         result = service.predict(requested, ledger_mode=ledger_mode, timezone=config.timezone)
-    except ValueError as exc:
+    except (ValueError, NoEligibleModelError) as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2) from exc
     finally:
@@ -47,6 +68,7 @@ def predict_tomorrow(
         "Quality",
         "Model version",
         "Odds observed",
+        "Decision",
     )
     for row in result.frame.iter_rows(named=True):
         table.add_row(
@@ -85,6 +107,7 @@ def predict_tomorrow(
             str(row["data_quality_status"]),
             str(row["model_version"]),
             str(row["odds_snapshot_timestamp"] or "unavailable"),
+            f"{row['decision_state']}: {','.join(row['decision_reasons']) or 'criteria satisfied'}",
         )
     console.print(
         f"Prediction run {result.prediction_run_id} using {result.model_version} for {result.fixture_count} fixtures."

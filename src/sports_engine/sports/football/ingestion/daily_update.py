@@ -13,6 +13,8 @@ from sports_engine.sports.football.ingestion.detailed_matches import (
     DetailedMatchIngestionService,
 )
 from sports_engine.sports.football.normalization.fixtures import normalize_fixture
+from sports_engine.warehouse.checkpoints import get as get_checkpoint
+from sports_engine.warehouse.checkpoints import put as put_checkpoint
 from sports_engine.warehouse.repositories.fixtures import upsert_fixture
 from sports_engine.warehouse.repositories.leagues import admitted_seasons
 from sports_engine.warehouse.repositories.request_log import latest_raw_path
@@ -56,19 +58,23 @@ class DailyUpdateService:
         ledger_mode: str,
         include_today: bool = True,
         job_run_id: str | None = None,
+        discovery_dates: list[date] | None = None,
+        checkpoint: bool = False,
     ) -> DailyUpdateResult:
-        target_dates = [operational_date - timedelta(days=1)]
-        if include_today:
-            target_dates.append(operational_date)
-        target_dates.append(operational_date + timedelta(days=1))
+        target_dates = discovery_dates or [operational_date - timedelta(days=1)]
+        if discovery_dates is None:
+            if include_today:
+                target_dates.append(operational_date)
+            target_dates.append(operational_date + timedelta(days=1))
         admitted = {
             (league_id, season): competition_season_id
             for competition_season_id, league_id, season in admitted_seasons(self.connection, ledger_mode)
         }
         relevant = 0
         written = 0
-        completed_ids: list[int] = []
+        total_enrichment = DetailedIngestionResult(True, 0, 0, 0, 0)
         for target_date in target_dates:
+            completed_ids: list[int] = []
             purpose = f"daily_discovery:{ledger_mode}:{target_date.isoformat()}"
             rows = self.provider.get(
                 Endpoint.FIXTURES,
@@ -100,13 +106,61 @@ class DailyUpdateService:
                 written += 1
                 if record.status_short in FINAL_STATUSES and self._needs_enrichment(record.provider_fixture_id):
                     completed_ids.append(record.provider_fixture_id)
-        enrichment = DetailedMatchIngestionService(
-            self.connection,
-            self.provider,
-            self.quarantine_dir,
-            self.raw_path_resolver,
-        ).run(dict.fromkeys(completed_ids), job_run_id=job_run_id)
-        return DailyUpdateResult(tuple(target_dates), relevant, len(completed_ids), written, enrichment)
+            enrichment = DetailedMatchIngestionService(
+                self.connection,
+                self.provider,
+                self.quarantine_dir,
+                self.raw_path_resolver,
+            ).run(dict.fromkeys(completed_ids), job_run_id=job_run_id)
+            total_enrichment = DetailedIngestionResult(
+                total_enrichment.complete and enrichment.complete,
+                total_enrichment.fixtures_received + enrichment.fixtures_received,
+                total_enrichment.fixtures_eligible + enrichment.fixtures_eligible,
+                total_enrichment.fixtures_quarantined + enrichment.fixtures_quarantined,
+                enrichment.next_batch_index if not enrichment.complete else 0,
+            )
+            if checkpoint and enrichment.complete:
+                put_checkpoint(
+                    self.connection,
+                    f"daily_discovery:{ledger_mode}",
+                    {"last_date": target_date.isoformat()},
+                    job_run_id,
+                )
+            if not enrichment.complete:
+                break
+        return DailyUpdateResult(
+            tuple(target_dates), relevant, total_enrichment.fixtures_received, written, total_enrichment
+        )
+
+    def run_catch_up(
+        self,
+        operational_date: date,
+        *,
+        ledger_mode: str,
+        maximum_dates: int = 8,
+        job_run_id: str | None = None,
+    ) -> DailyUpdateResult:
+        state = get_checkpoint(self.connection, f"daily_discovery:{ledger_mode}")
+        start = (
+            date.fromisoformat(state["last_date"]) + timedelta(days=1)
+            if isinstance(state, dict) and state.get("last_date")
+            else operational_date - timedelta(days=1)
+        )
+        end = operational_date + timedelta(days=1)
+        if start > end:
+            return DailyUpdateResult((), 0, 0, 0, DetailedIngestionResult(True, 0, 0, 0, 0))
+        dates: list[date] = []
+        cursor = start
+        while cursor <= end and len(dates) < maximum_dates:
+            dates.append(cursor)
+            cursor += timedelta(days=1)
+        return self.run(
+            operational_date,
+            ledger_mode=ledger_mode,
+            job_run_id=job_run_id,
+            discovery_dates=dates,
+            checkpoint=True,
+        )
 
     def _needs_enrichment(self, provider_fixture_id: int) -> bool:
         row = self.connection.execute(

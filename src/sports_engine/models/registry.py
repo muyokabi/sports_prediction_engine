@@ -45,7 +45,9 @@ class ModelRegistry:
             raise ValueError(f"Invalid model status {run.status!r}")
         model_run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sports-engine:model:{run.version}"))
         self.connection.execute(
-            "INSERT INTO model_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO model_runs (model_run_id, model_type, version, status, training_start, training_end, "
+            "feature_schema_hash, training_dataset_hash, hyperparameters, metrics, calibration_method, artifact_path, "
+            "library_versions, git_commit, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 model_run_id,
                 run.model_type,
@@ -68,11 +70,13 @@ class ModelRegistry:
 
     def promote(self, version: str) -> None:
         row = self.connection.execute(
-            "SELECT metrics FROM model_runs WHERE version=? AND status='candidate'", [version]
+            "SELECT metrics, evidence_state FROM model_runs WHERE version=? AND status='candidate'", [version]
         ).fetchone()
         if not row:
             raise ValueError(f"Candidate model {version!r} does not exist")
         candidate_metrics = self._metrics(row[0])
+        if row[1] is not None and row[1] != "PRODUCTION_ACTIONABLE":
+            raise ValueError(f"Candidate evidence state {row[1]} is not production-actionable")
         baseline = candidate_metrics.get("bookmaker_baseline")
         if isinstance(baseline, dict) and not self._is_better(candidate_metrics, baseline):
             raise ValueError("Candidate does not outperform the bookmaker baseline on probability metrics")

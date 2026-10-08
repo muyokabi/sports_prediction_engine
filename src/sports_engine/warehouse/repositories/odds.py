@@ -9,6 +9,7 @@ import duckdb
 from sports_engine.core.ids import canonical_id
 from sports_engine.markets.implied_probability import no_vig_probabilities, raw_implied_probability
 from sports_engine.markets.overround import overround
+from sports_engine.markets.taxonomy import persist_observed_api_football_markets
 from sports_engine.sports.football.domain.odds import OddsPrice
 
 
@@ -65,6 +66,10 @@ def store_odds_snapshot(
     groups: dict[tuple[int, int], list[OddsPrice]] = defaultdict(list)
     for price in prices:
         groups[(price.provider_bookmaker_id, price.provider_market_id)].append(price)
+    bookmakers: dict[object, list[object]] = {}
+    markets: dict[object, list[object]] = {}
+    selections: dict[object, list[object]] = {}
+    price_rows: dict[tuple[object, object, object, object], list[object]] = {}
     for group in groups.values():
         decimal = [price.decimal_odds for price in group]
         fair: list[float | None] = (
@@ -78,29 +83,32 @@ def store_odds_snapshot(
             selection_id = canonical_id(
                 "selection", "api_football", f"{price.provider_market_id}:{normalized}:{price.line or ''}"
             )
-            connection.execute(
-                "INSERT INTO bookmakers VALUES (?, ?, ?) ON CONFLICT (bookmaker_id) DO UPDATE SET name=excluded.name",
-                [bookmaker_id, price.provider_bookmaker_id, price.bookmaker_name],
-            )
-            connection.execute(
-                "INSERT INTO bet_markets VALUES (?, ?, ?) ON CONFLICT (market_id) DO UPDATE SET name=excluded.name",
-                [market_id, price.provider_market_id, price.market_name],
-            )
-            connection.execute(
-                "INSERT INTO bet_selections VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-                [selection_id, market_id, price.selection_name, normalized, price.line],
-            )
-            connection.execute(
-                "INSERT INTO odds_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    snapshot_id,
-                    bookmaker_id,
-                    market_id,
-                    selection_id,
-                    price.decimal_odds,
-                    raw_implied_probability(price.decimal_odds),
-                    fair[index],
-                    margin,
-                ],
-            )
+            bookmakers[bookmaker_id] = [bookmaker_id, price.provider_bookmaker_id, price.bookmaker_name]
+            markets[market_id] = [market_id, price.provider_market_id, price.market_name]
+            selections[selection_id] = [selection_id, market_id, price.selection_name, normalized, price.line]
+            key = (snapshot_id, bookmaker_id, market_id, selection_id)
+            price_rows[key] = [
+                *key,
+                price.decimal_odds,
+                raw_implied_probability(price.decimal_odds),
+                fair[index],
+                margin,
+            ]
+    connection.executemany(
+        "INSERT INTO bookmakers VALUES (?, ?, ?) ON CONFLICT (bookmaker_id) DO UPDATE SET name=excluded.name",
+        list(bookmakers.values()),
+    )
+    connection.executemany(
+        "INSERT INTO bet_markets VALUES (?, ?, ?) ON CONFLICT (market_id) DO UPDATE SET name=excluded.name",
+        list(markets.values()),
+    )
+    persist_observed_api_football_markets(connection)
+    connection.executemany(
+        "INSERT INTO bet_selections VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        list(selections.values()),
+    )
+    connection.executemany(
+        "INSERT INTO odds_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        list(price_rows.values()),
+    )
     return True

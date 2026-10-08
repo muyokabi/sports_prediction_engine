@@ -27,6 +27,8 @@ def test_job_run_persists_failure_and_reraises(tmp_path: Path) -> None:
     migrate(connection)
     with pytest.raises(RuntimeError, match="broken"), job_run(connection, "test.failure", JobSummary()):
         raise RuntimeError("broken")
-    row = connection.execute("SELECT status, error_message FROM job_runs ORDER BY started_at DESC LIMIT 1").fetchone()
-    assert row == ("failed", "broken")
+    row = connection.execute(
+        "SELECT status, error_message, error_category FROM job_runs ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    assert row == ("failed", "broken", "UNCLASSIFIED_FAILURE")
     connection.close()

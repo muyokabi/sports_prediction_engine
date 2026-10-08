@@ -2,7 +2,7 @@ import json
 import pickle
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,14 @@ import duckdb
 import numpy as np
 import polars as pl
 
+from sports_engine.core.exceptions import NoEligibleModelError
+from sports_engine.markets.decision import (
+    BettingDecision,
+    EvidencePolicy,
+    MarketQuote,
+    RiskPolicy,
+    decide_wager,
+)
 from sports_engine.models.ml.catboost import CatBoostProbabilityModel
 from sports_engine.models.ml.lightgbm import LightGBMProbabilityModel
 from sports_engine.models.ml.logistic import LogisticProbabilityModel
@@ -35,6 +43,9 @@ class PredictionService:
         windows: list[int],
         exponential_half_life: float,
         prediction_lead_hours: int,
+        maximum_odds_age_minutes: int = 180,
+        evidence_policy: EvidencePolicy | None = None,
+        risk_policy: RiskPolicy | None = None,
     ) -> None:
         self.connection = connection
         self.builder = PointInTimeFeatureBuilder(
@@ -44,6 +55,9 @@ class PredictionService:
             exponential_half_life=exponential_half_life,
             prediction_lead_hours=prediction_lead_hours,
         )
+        self.maximum_odds_age = timedelta(minutes=maximum_odds_age_minutes)
+        self.evidence_policy = evidence_policy or EvidencePolicy(0, 0, 0, 0, 10, True, 0.40)
+        self.risk_policy = risk_policy or RiskPolicy(0.01, 0.05, 5, 0.25, 0.01, 0.03, 0.0)
 
     def predict(
         self,
@@ -54,11 +68,11 @@ class PredictionService:
         observed_at: datetime | None = None,
     ) -> PredictionResult:
         champion = self.connection.execute(
-            "SELECT model_type, version, artifact_path, calibration_method FROM model_runs "
+            "SELECT model_type, version, artifact_path, calibration_method, metrics FROM model_runs "
             "WHERE status='champion' ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         if not champion:
-            raise ValueError("No champion model is registered")
+            raise NoEligibleModelError("No champion model is registered")
         observed = observed_at or datetime.now(UTC)
         frame = self.builder.build_prediction_frame(
             datetime.combine(target_date, datetime.min.time(), tzinfo=UTC),
@@ -68,7 +82,8 @@ class PredictionService:
         )
         if frame.is_empty():
             raise ValueError(f"No unplayed {ledger_mode} fixtures found for {target_date}")
-        model_type, model_version, artifact_value, calibration_method = champion
+        model_type, model_version, artifact_value, calibration_method, metrics_value = champion
+        model_metrics = metrics_value if isinstance(metrics_value, dict) else json.loads(metrics_value)
         artifact_path = Path(artifact_value)
         manifest_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
         if not artifact_path.is_file() or not manifest_path.is_file():
@@ -91,6 +106,7 @@ class PredictionService:
             [ledger_mode, timezone, target_date, observed],
         ).fetchone()
         self.connection.begin()
+        decisions: list[BettingDecision] = []
         try:
             self.connection.execute(
                 "INSERT INTO prediction_runs VALUES (?, ?, ?, ?, ?, current_timestamp)",
@@ -108,6 +124,28 @@ class PredictionService:
                     row.get("bookmaker_draw_fair"),
                     row.get("bookmaker_away_fair"),
                 ]
+                quotes = self._quotes(str(row["fixture_id"]), observed)
+                probabilities_by_name = dict(zip(("home", "draw", "away"), probabilities[index].tolist(), strict=True))
+                exposure_row = self.connection.execute(
+                    "SELECT coalesce(sum(stake_fraction), 0), count(*) FROM prediction_decisions "
+                    "WHERE state='BET' AND CAST(decision_timestamp AS DATE)=CAST(? AS DATE)",
+                    [observed],
+                ).fetchone()
+                decision = decide_wager(
+                    probabilities_by_name,
+                    quotes,
+                    decision_time=observed,
+                    maximum_odds_age=self.maximum_odds_age,
+                    model_metrics=model_metrics,
+                    calibrated=bool(calibration_method),
+                    home_history=int(row.get("home_history_matches") or 0),
+                    away_history=int(row.get("away_history_matches") or 0),
+                    evidence=self.evidence_policy,
+                    risk=self.risk_policy,
+                    current_daily_exposure=float(exposure_row[0]) if exposure_row else 0.0,
+                    active_recommendations=int(exposure_row[1]) if exposure_row else 0,
+                )
+                decisions.append(decision)
                 self.connection.execute(
                     "INSERT INTO predictions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [
@@ -116,6 +154,26 @@ class PredictionService:
                         *probabilities[index].tolist(),
                         *market,
                         "MARKET_AVAILABLE" if all(value is not None for value in market) else "MODEL_ONLY",
+                    ],
+                )
+                self.connection.execute(
+                    "INSERT INTO prediction_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ",
+                    [
+                        str(uuid.uuid4()),
+                        prediction_run_id,
+                        row["fixture_id"],
+                        decision.state,
+                        json.dumps(decision.reasons),
+                        decision.selected_market,
+                        decision.model_probability,
+                        decision.market_fair_probability,
+                        decision.offered_decimal_odds,
+                        decision.raw_implied_probability,
+                        decision.expected_value,
+                        decision.minimum_acceptable_odds,
+                        decision.odds_observed_at,
+                        observed,
+                        decision.stake_fraction,
                     ],
                 )
             self.connection.commit()
@@ -145,6 +203,8 @@ class PredictionService:
             pl.lit(model_type).alias("model_type"),
             pl.lit(model_version).alias("model_version"),
             pl.lit(odds_time[0] if odds_time else None).alias("odds_snapshot_timestamp"),
+            pl.Series("decision_state", [decision.state for decision in decisions]),
+            pl.Series("decision_reasons", [list(decision.reasons) for decision in decisions]),
         )
         for outcome in ("home", "draw", "away"):
             market_column = f"bookmaker_{outcome}_fair"
@@ -169,6 +229,24 @@ class PredictionService:
             else pl.lit("MODEL_ONLY").alias("data_quality_status")
         )
         return PredictionResult(prediction_run_id, model_version, frame.height, output)
+
+    def _quotes(self, fixture_id: str, prediction_time: datetime) -> list[MarketQuote]:
+        rows = self.connection.execute(
+            "WITH latest AS (SELECT max(observed_at) observed_at FROM odds_snapshots "
+            "WHERE fixture_id=? AND observed_at<=?) "
+            "SELECT s.normalized_name, avg(p.fair_probability), max(p.decimal_odds), o.observed_at "
+            "FROM odds_snapshots o JOIN latest l USING (observed_at) "
+            "JOIN odds_prices p USING (snapshot_id) JOIN bet_markets m USING (market_id) "
+            "JOIN bet_selections s USING (selection_id) WHERE o.fixture_id=? "
+            "AND lower(m.name) IN ('match winner','1x2') "
+            "GROUP BY s.normalized_name, o.observed_at",
+            [fixture_id, prediction_time, fixture_id],
+        ).fetchall()
+        return [
+            MarketQuote(str(outcome), float(fair), float(price), observed)
+            for outcome, fair, price, observed in rows
+            if outcome in {"home", "draw", "away"} and fair is not None
+        ]
 
     @staticmethod
     def _load_model(model_type: str, path: Path) -> Any:

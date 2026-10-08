@@ -31,6 +31,16 @@ def complete_team_statistics() -> list[dict[str, object]]:
     return [{"type": name, "value": 0} for name in names]
 
 
+def complete_participants(first_player_id: int) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    player_ids = range(first_player_id, first_player_id + 11)
+    lineup = [{"player": {"id": player_id}} for player_id in player_ids]
+    players = [
+        {"player": {"id": player_id}, "statistics": [complete_player()]}
+        for player_id in range(first_player_id, first_player_id + 11)
+    ]
+    return lineup, players
+
+
 def test_incomplete_match_is_not_ml_eligible() -> None:
     assessment = assess_match_package(
         {
@@ -43,21 +53,23 @@ def test_incomplete_match_is_not_ml_eligible() -> None:
 
 
 def test_full_embedded_package_is_eligible() -> None:
+    home_lineup, home_players = complete_participants(100)
+    away_lineup, away_players = complete_participants(200)
     payload = {
         "fixture": {"id": 1, "date": "2026-01-01", "status": {"short": "FT"}},
         "goals": {"home": 1, "away": 0},
         "events": [],
         "lineups": [
-            {"startXI": [{} for _ in range(11)], "substitutes": []},
-            {"startXI": [{} for _ in range(11)], "substitutes": []},
+            {"startXI": home_lineup, "substitutes": []},
+            {"startXI": away_lineup, "substitutes": []},
         ],
         "statistics": [
             {"statistics": complete_team_statistics()},
             {"statistics": complete_team_statistics()},
         ],
         "players": [
-            {"players": [{"statistics": [complete_player()]}]},
-            {"players": [{"statistics": [complete_player()]}]},
+            {"players": home_players},
+            {"players": away_players},
         ],
     }
     assert assess_match_package(payload).eligibility == Eligibility.ML_ELIGIBLE

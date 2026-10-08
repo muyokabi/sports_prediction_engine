@@ -1,0 +1,1 @@
+"""Standalone persisted-result reports."""

@@ -14,6 +14,12 @@ def normalize_odds(payload: dict[str, Any]) -> list[OddsPrice]:
     for bookmaker in payload.get("bookmakers", []):
         for market in bookmaker.get("bets", []):
             for selection in market.get("values", []):
+                try:
+                    decimal_odds = float(selection["odd"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if decimal_odds <= 1:
+                    continue
                 raw_name = str(selection["value"])
                 match = LINE_PATTERN.match(raw_name.strip())
                 if match is None and "handicap" in str(market.get("name", "")).lower():
@@ -29,7 +35,7 @@ def normalize_odds(payload: dict[str, Any]) -> list[OddsPrice]:
                         market_name=market["name"],
                         selection_name=selection_name,
                         line=line,
-                        decimal_odds=float(selection["odd"]),
+                        decimal_odds=decimal_odds,
                         provider_update_time=update,
                     )
                 )

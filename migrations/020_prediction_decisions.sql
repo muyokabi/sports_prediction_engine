@@ -1,0 +1,20 @@
+CREATE TABLE prediction_decisions (
+    decision_id UUID PRIMARY KEY,
+    prediction_run_id UUID NOT NULL REFERENCES prediction_runs(prediction_run_id),
+    fixture_id UUID NOT NULL REFERENCES fixtures(fixture_id),
+    state VARCHAR NOT NULL,
+    reason_codes JSON NOT NULL,
+    selected_market VARCHAR,
+    model_probability DOUBLE,
+    market_fair_probability DOUBLE,
+    offered_decimal_odds DOUBLE,
+    raw_implied_probability DOUBLE,
+    estimated_expected_value DOUBLE,
+    minimum_acceptable_odds DOUBLE,
+    odds_observation_timestamp TIMESTAMPTZ,
+    decision_timestamp TIMESTAMPTZ NOT NULL,
+    stake_fraction DOUBLE,
+    CHECK (state IN ('BET', 'NO_BET')),
+    CHECK (stake_fraction IS NULL OR stake_fraction BETWEEN 0 AND 1),
+    UNIQUE (prediction_run_id, fixture_id)
+);

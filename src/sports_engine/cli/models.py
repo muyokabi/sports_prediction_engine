@@ -1,4 +1,7 @@
 import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -83,3 +86,50 @@ def reject(version: str = typer.Argument(..., help="Candidate model version.")) 
     finally:
         connection.close()
     console.print(f"Rejected candidate [bold]{version}[/].")
+
+
+@app.command("reliability")
+def reliability(as_json: bool = typer.Option(False, "--json")) -> None:
+    config = load_config()
+    connection = open_database(config)
+    row = connection.execute(
+        "SELECT version, training_start, training_end, metrics, calibration_method, "
+        "training_dataset_hash, artifact_path, model_type, created_at FROM model_runs "
+        "WHERE status='champion' ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    connection.close()
+    if not row:
+        console.print("[red]No champion model is registered.[/]")
+        raise typer.Exit(2)
+    metrics = row[3] if isinstance(row[3], dict) else json.loads(row[3])
+    manifest_path = Path(row[6]).with_suffix(Path(row[6]).suffix + ".json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    reports = []
+    for path in (config.artifacts_dir / "evaluation").glob(f"{row[7]}-{str(row[5])[:12]}-*.json"):
+        reports.append(json.loads(path.read_text(encoding="utf-8")))
+    latest_report: dict[str, Any] = max(reports, key=lambda item: item.get("created_at", ""), default={})
+    payload = {
+        "model_version": row[0],
+        "training_start": row[1],
+        "training_end": row[2],
+        "training_fixtures": metrics.get("train_rows"),
+        "validation_fixtures": metrics.get("validation_rows"),
+        "test_fixtures": metrics.get("test_rows"),
+        "log_loss": metrics.get("log_loss"),
+        "brier": metrics.get("brier"),
+        "rps": metrics.get("rps"),
+        "ece": metrics.get("expected_calibration_error"),
+        "calibration": row[4] or "none",
+        "bookmaker_benchmark": "available" if metrics.get("bookmaker_baseline") else "unavailable",
+        "walk_forward_periods": (latest_report.get("aggregate_metrics") or {}).get("folds"),
+        "age_days": (datetime.now(UTC) - row[8]).total_seconds() / 86_400,
+        "feature_dataset_hash": row[5],
+        "leakage_audit": manifest.get("leakage_audit", "unverified"),
+    }
+    if as_json:
+        console.print_json(json.dumps(payload, default=str))
+        return
+    table = Table("Measure", "Value")
+    for key, value in payload.items():
+        table.add_row(key.replace("_", " ").title(), str(value))
+    console.print(table)

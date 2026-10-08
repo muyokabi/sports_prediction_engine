@@ -5,14 +5,18 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+import pytest
 
 from sports_engine.core.enums import Priority
+from sports_engine.core.exceptions import QuotaExhaustedError
 from sports_engine.providers.api_football.errors import ApiFootballPlanRestrictionError
 from sports_engine.sports.football.features.dataset import PointInTimeFeatureBuilder
 from sports_engine.sports.football.ingestion.daily_update import DailyUpdateService
 from sports_engine.sports.football.ingestion.detailed_matches import DetailedMatchIngestionService
 from sports_engine.sports.football.normalization.fixtures import normalize_fixture
 from sports_engine.sports.football.quality.completeness import assess_match_package
+from sports_engine.sports.football.quality.soak import CompletenessSoakService
+from sports_engine.warehouse import checkpoints
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
 from sports_engine.warehouse.repositories.fixtures import upsert_fixture
@@ -113,7 +117,10 @@ def _payload() -> dict[str, Any]:
         ],
         "lineups": [_lineup(10, 1000), _lineup(11, 2000)],
         "statistics": [_stats(10), _stats(11)],
-        "players": [{"team": {"id": 10}, "players": [_player(1000)]}, {"team": {"id": 11}, "players": [_player(2000)]}],
+        "players": [
+            {"team": {"id": 10}, "players": [_player(1000 + index) for index in range(11)]},
+            {"team": {"id": 11}, "players": [_player(2000 + index) for index in range(11)]},
+        ],
     }
 
 
@@ -154,9 +161,49 @@ def test_complete_match_package_is_batched_and_committed_atomically(tmp_path: Pa
     assert connection.execute("SELECT count(*) FROM lineups").fetchone() == (2,)
     assert connection.execute("SELECT count(*) FROM lineup_players").fetchone() == (24,)
     assert connection.execute("SELECT count(*) FROM team_match_statistics").fetchone() == (2,)
-    assert connection.execute("SELECT count(*) FROM player_match_statistics").fetchone() == (2,)
+    assert connection.execute("SELECT count(*) FROM player_match_statistics").fetchone() == (22,)
     assert connection.execute("SELECT eligibility FROM fixture_quality_status").fetchone() == ("ML_ELIGIBLE",)
     assert connection.execute("SELECT count(*) FROM fixture_completeness WHERE state='complete'").fetchone() == (15,)
+    connection.close()
+
+
+def test_duplicate_provider_lineup_player_is_deduplicated(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "duplicate-lineup.duckdb")
+    migrate(connection)
+    payload = _payload()
+    payload["lineups"][0]["substitutes"].append(copy.deepcopy(payload["lineups"][0]["substitutes"][0]))
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2026, "current": True, "coverage": {}},
+        admitted=True,
+        reason="qualified",
+        priority=1,
+    )
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+    assessment = assess_match_package(payload)
+    persist_match_package(connection, payload, assessment, source_raw_path="details.json.gz")
+    assert connection.execute("SELECT count(*) FROM lineup_players").fetchone() == (24,)
+    connection.close()
+
+
+def test_duplicate_provider_player_statistics_are_deduplicated(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "duplicate-player-stat.duckdb")
+    migrate(connection)
+    payload = _payload()
+    payload["players"][0]["players"].append(copy.deepcopy(payload["players"][0]["players"][0]))
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2026, "current": True, "coverage": {}},
+        admitted=True,
+        reason="qualified",
+        priority=1,
+    )
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+    assessment = assess_match_package(payload)
+    persist_match_package(connection, payload, assessment, source_raw_path="details.json.gz")
+    assert connection.execute("SELECT count(*) FROM player_match_statistics").fetchone() == (22,)
     connection.close()
 
 
@@ -173,7 +220,7 @@ def test_incomplete_package_is_quarantined_and_not_ml_eligible(tmp_path: Path) -
         priority=1,
     )
     upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
-    payload["players"][0]["players"][0]["statistics"][0]["passes"]["total"] = None
+    payload["players"][0]["players"][0]["statistics"][0]["games"]["minutes"] = None
 
     class IncompleteProvider(Provider):
         def get(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -191,6 +238,60 @@ def test_incomplete_package_is_quarantined_and_not_ml_eligible(tmp_path: Path) -
     assert connection.execute("SELECT eligibility FROM fixture_quality_status").fetchone() == ("PENDING_REPAIR",)
     assert connection.execute("SELECT count(*) FROM data_quality_issues").fetchone() == (1,)
     assert len(list((tmp_path / "quarantine").glob("*.json"))) == 1
+    connection.close()
+
+
+def test_action_nulls_and_unused_substitutes_do_not_fail_player_core_completeness() -> None:
+    payload = _payload()
+    played = payload["players"][0]["players"][0]["statistics"][0]
+    played["shots"]["total"] = None
+    played["tackles"]["total"] = None
+    payload["players"][0]["players"].append(
+        {
+            "player": {"id": 1020, "name": "Unused"},
+            "statistics": [
+                {
+                    "games": {"minutes": None, "substitute": True},
+                    "shots": {"total": None},
+                    "passes": {"total": None},
+                }
+            ],
+        }
+    )
+    assert assess_match_package(payload).eligibility.value == "ML_ELIGIBLE"
+
+
+def test_zero_id_provider_placeholders_are_not_canonicalized(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "placeholder-player.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2026, "current": True, "coverage": {}},
+        admitted=True,
+        reason="qualified",
+        priority=1,
+    )
+    payload = _payload()
+    placeholder = _player(0)
+    placeholder["player"]["name"] = "Unknown A"
+    second = copy.deepcopy(placeholder)
+    second["player"]["name"] = "Unknown B"
+    payload["players"][0]["players"].extend([placeholder, second])
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+
+    class PlaceholderProvider(Provider):
+        def get(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            return [payload]
+
+    result = DetailedMatchIngestionService(
+        connection,
+        PlaceholderProvider(),
+        tmp_path / "quarantine",
+        raw_path_resolver=lambda purpose, run_id: "details.json.gz",
+    ).run([100])
+    assert result.fixtures_eligible == 1
+    assert connection.execute("SELECT count(*) FROM player_match_statistics").fetchone() == (22,)
     connection.close()
 
 
@@ -366,6 +467,137 @@ def test_missing_embedded_statistics_use_targeted_repair_endpoints(tmp_path: Pat
         "/fixtures/statistics",
         "/fixtures/players",
     ]
+    connection.close()
+
+
+def test_completeness_soak_reports_assessed_and_unassessed_counts(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "soak.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2024, "current": False, "coverage": {}},
+        admitted=False,
+        replay_eligible=True,
+        ledger_mode="replay",
+        reason="replay-only",
+        priority=1,
+    )
+    payload = _payload()
+    payload["league"]["season"] = 2024
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+    result = CompletenessSoakService(
+        connection,
+        Provider(),
+        tmp_path / "quarantine",
+        tmp_path / "reports",
+        raw_path_resolver=lambda purpose, run_id: "details.json.gz",
+    ).run(
+        ledger_mode="replay",
+        league_limit=1,
+        fixtures_per_league=1,
+        repair_attempt_limit=3,
+        job_run_id=None,
+    )
+    assert (result.fixtures_sampled, result.fixtures_assessed, result.fixtures_unassessed) == (1, 1, 0)
+    assert (result.fully_complete, result.ml_eligible, result.quarantined) == (1, 1, 0)
+    assert result.report_path.exists()
+    connection.close()
+
+
+def test_rerun_after_commit_before_checkpoint_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = connect(tmp_path / "post-commit-crash.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2024, "current": False, "coverage": {}},
+        admitted=False,
+        replay_eligible=True,
+        ledger_mode="replay",
+        reason="replay-only",
+        priority=1,
+    )
+    payload = _payload()
+    payload["league"]["season"] = 2024
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+    real_put = checkpoints.put
+    calls = 0
+
+    def crash_once(*args: Any, **kwargs: Any) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("crash after commit")
+        real_put(*args, **kwargs)
+
+    monkeypatch.setattr(checkpoints, "put", crash_once)
+    service = DetailedMatchIngestionService(
+        connection,
+        Provider(),
+        tmp_path / "quarantine",
+        raw_path_resolver=lambda purpose, run_id: "details.json.gz",
+    )
+    with pytest.raises(RuntimeError, match="after commit"):
+        service.run([100])
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (1,)
+    monkeypatch.setattr(checkpoints, "put", real_put)
+    assert service.run([100]).fixtures_eligible == 1
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (1,)
+    assert connection.execute("SELECT count(*) FROM fixture_events").fetchone() == (1,)
+    connection.close()
+
+
+def test_batch_quota_interruption_resumes_without_duplicates(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "batch-resume.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2024, "current": False, "coverage": {}},
+        admitted=False,
+        replay_eligible=True,
+        ledger_mode="replay",
+        reason="replay-only",
+        priority=1,
+    )
+    first = _payload()
+    first["league"]["season"] = 2024
+    second = copy.deepcopy(first)
+    second["fixture"]["id"] = 101
+    for payload in (first, second):
+        upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+    incomplete_second = copy.deepcopy(second)
+    incomplete_second["players"] = []
+
+    class InterruptedBatchProvider:
+        def get(self, endpoint: str, parameters: Mapping[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+            if endpoint == "/fixtures":
+                return [first, incomplete_second]
+            raise QuotaExhaustedError("protected reserve")
+
+    interrupted = DetailedMatchIngestionService(
+        connection,
+        InterruptedBatchProvider(),
+        tmp_path / "quarantine",
+        raw_path_resolver=lambda purpose, run_id: "details.json.gz",
+    ).run([100, 101])
+    assert not interrupted.complete and interrupted.fixtures_eligible == 1 and interrupted.next_batch_index == 0
+
+    class ResumedBatchProvider:
+        def get(self, endpoint: str, parameters: Mapping[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+            assert endpoint == "/fixtures"
+            return [first, second]
+
+    resumed = DetailedMatchIngestionService(
+        connection,
+        ResumedBatchProvider(),
+        tmp_path / "quarantine",
+        raw_path_resolver=lambda purpose, run_id: "details.json.gz",
+    ).run([100, 101])
+    assert resumed.complete and resumed.fixtures_eligible == 2
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (2,)
+    assert connection.execute("SELECT count(*) FROM fixture_events").fetchone() == (2,)
     connection.close()
 
 

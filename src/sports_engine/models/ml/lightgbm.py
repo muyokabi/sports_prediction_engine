@@ -29,6 +29,10 @@ class LightGBMProbabilityModel:
         self.estimator.fit(features, targets)
         return self
 
+    def fit_incremental(self, features: np.ndarray, targets: np.ndarray, parent: "LightGBMProbabilityModel") -> Self:
+        self.estimator.fit(features, targets, init_model=parent.estimator.booster_)
+        return self
+
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
         return np.asarray(self.estimator.predict_proba(features))
 

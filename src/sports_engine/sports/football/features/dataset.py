@@ -75,6 +75,8 @@ class PointInTimeFeatureBuilder:
                 "home_elo": ratings[match["home_team_id"]],
                 "away_elo": ratings[match["away_team_id"]],
                 "elo_difference": ratings[match["home_team_id"]] - ratings[match["away_team_id"]],
+                "home_history_matches": len(home_history),
+                "away_history_matches": len(away_history),
                 "target_home_goals": match["home_goals"],
                 "target_away_goals": match["away_goals"],
                 "target_result": self._result(match["home_goals"], match["away_goals"]),
@@ -235,6 +237,8 @@ class PointInTimeFeatureBuilder:
                 "home_elo": ratings[home_team],
                 "away_elo": ratings[away_team],
                 "elo_difference": ratings[home_team] - ratings[away_team],
+                "home_history_matches": len(home_history),
+                "away_history_matches": len(away_history),
             }
             row.update(self._team_features("home", home_history, kickoff, "HOME"))
             row.update(self._team_features("away", away_history, kickoff, "AWAY"))
@@ -358,12 +362,14 @@ class PointInTimeFeatureBuilder:
 
     def _odds_features(self, fixture_id: str, prediction_time: datetime) -> dict[str, Any]:
         rows = self.connection.execute(
+            "WITH latest AS (SELECT max(observed_at) observed_at FROM odds_snapshots "
+            "WHERE fixture_id=? AND observed_at<=?) "
             "SELECT s.normalized_name, avg(p.fair_probability), min(o.observed_at), max(o.observed_at) "
-            "FROM odds_snapshots o JOIN odds_prices p USING (snapshot_id) "
+            "FROM odds_snapshots o JOIN latest l USING (observed_at) JOIN odds_prices p USING (snapshot_id) "
             "JOIN bet_markets m USING (market_id) JOIN bet_selections s USING (selection_id) "
-            "WHERE o.fixture_id=? AND o.observed_at<=? AND lower(m.name) IN ('match winner', '1x2') "
+            "WHERE o.fixture_id=? AND lower(m.name) IN ('match winner', '1x2') "
             "GROUP BY s.normalized_name",
-            [fixture_id, prediction_time],
+            [fixture_id, prediction_time, fixture_id],
         ).fetchall()
         values = {row[0]: row[1] for row in rows}
         return {

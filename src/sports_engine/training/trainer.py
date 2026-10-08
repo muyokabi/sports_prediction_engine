@@ -25,6 +25,12 @@ from sports_engine.models.statistical.dixon_coles import DixonColesModel
 from sports_engine.models.statistical.elo import EloModel
 from sports_engine.models.statistical.poisson import PoissonModel
 from sports_engine.training.dataset_builder import load_training_dataset, prediction_times
+from sports_engine.training.evidence import (
+    EvidenceState,
+    assess_model_evidence,
+    load_evidence_policies,
+    persist_evidence_assessment,
+)
 from sports_engine.training.temporal_split import split_by_time
 from sports_engine.training.tuning import constrained_probability_search
 
@@ -48,6 +54,7 @@ class TrainingResult:
     artifact_path: Path
     metrics: dict[str, Any]
     dataset_id: str
+    evidence_state: str = EvidenceState.RESEARCH_TRAINABLE
 
 
 class ModelTrainer:
@@ -72,11 +79,34 @@ class ModelTrainer:
         *,
         dataset_name: str | None = None,
         calibration_method: str | None = None,
+        training_mode: str = "full_refit",
+        parent_model_version: str | None = None,
     ) -> TrainingResult:
         validate_model_type(model_type)
         if calibration_method not in {None, "platt", "isotonic"}:
             raise ValueError("Calibration method must be one of: platt, isotonic")
         dataset = load_training_dataset(self.connection, dataset_name)
+        if training_mode not in {"full_refit", "warm_start"}:
+            raise ValueError("training_mode must be full_refit or warm_start")
+        if training_mode == "warm_start" and parent_model_version is None:
+            raise ValueError("Warm-start candidates require a parent model version")
+        policy = load_evidence_policies()[model_type]
+        evidence_features = (
+            [] if model_type in {"elo", "poisson", "dixon-coles"} else self._feature_columns(dataset.frame)
+        )
+        initial_evidence = assess_model_evidence(
+            model_type,
+            dataset.frame,
+            policy,
+            feature_columns=evidence_features,
+        )
+        persist_evidence_assessment(
+            self.connection,
+            initial_evidence,
+            dataset_id=dataset.dataset_id,
+        )
+        if initial_evidence.state == EvidenceState.INSUFFICIENT_DATA:
+            raise ValueError(f"{model_type} is not research-trainable: {', '.join(initial_evidence.reasons)}")
         times = prediction_times(dataset)
         fold = split_by_time(times)
         audit_temporal_partitions(
@@ -84,11 +114,20 @@ class ModelTrainer:
             [times[index] for index in fold.validation],
             [times[index] for index in fold.test],
         )
+        parent_model = None
+        parent_cutoff = None
+        if parent_model_version:
+            parent_model, parent_cutoff = self._load_parent(model_type, parent_model_version)
         model, validation_probabilities, probabilities, hyperparameters, feature_columns = self._fit(
-            model_type, dataset.frame, fold
+            model_type,
+            dataset.frame,
+            fold,
+            parent_model=parent_model,
+            parent_cutoff=parent_cutoff,
         )
         validation_targets = self._targets(dataset.frame)[fold.validation]
         targets = self._targets(dataset.frame)[fold.test]
+        training_targets = self._targets(dataset.frame)[fold.train]
         uncalibrated_metrics = probability_metrics(targets, probabilities)
         calibrator = None
         if calibration_method:
@@ -101,6 +140,9 @@ class ModelTrainer:
             {
                 "uncalibrated": uncalibrated_metrics,
                 "train_rows": len(fold.train),
+                "training_class_counts": {
+                    label: int((training_targets == index).sum()) for label, index in TARGET_LABELS.items()
+                },
                 "validation_rows": len(fold.validation),
                 "test_rows": len(fold.test),
                 "validation_start": min(times[index] for index in fold.validation).isoformat(),
@@ -112,6 +154,23 @@ class ModelTrainer:
         baseline = self._bookmaker_baseline(dataset.frame, fold.test, targets)
         if baseline is not None:
             test_metrics["bookmaker_baseline"] = baseline
+        evaluation_passed = bool(
+            np.isfinite(float(test_metrics["log_loss"]))
+            and np.isfinite(float(test_metrics["brier"]))
+            and float(test_metrics["log_loss"]) <= policy.maximum_log_loss
+            and float(test_metrics["brier"]) <= policy.maximum_brier
+        )
+        final_evidence = assess_model_evidence(
+            model_type,
+            dataset.frame,
+            policy,
+            feature_columns=evidence_features,
+            calibrated=bool(calibration_method) or policy.calibration_rows == 0,
+            evaluation_passed=evaluation_passed,
+        )
+        test_metrics["evidence_state"] = final_evidence.state
+        test_metrics["evidence_reasons"] = list(final_evidence.reasons)
+        test_metrics["calibration_required"] = policy.calibration_rows > 0
         created_at = datetime.now(UTC)
         version = self._version(model_type, dataset.dataset_hash, created_at)
         artifact_path = self.artifacts_dir / "models" / version / "model.pkl"
@@ -145,20 +204,54 @@ class ModelTrainer:
             "feature_columns": feature_columns,
             "class_order": ["HOME", "DRAW", "AWAY"],
             "random_seed": self.random_seed,
+            "leakage_audit": "passed",
         }
         write_artifact_metadata(artifact_path, manifest)
         try:
             ModelRegistry(self.connection).register(run)
+            self.connection.execute(
+                "UPDATE model_runs SET evidence_state=?, parent_model_version=?, training_mode=?, "
+                "training_cutoff=?, observations_included=? WHERE version=?",
+                [
+                    final_evidence.state,
+                    parent_model_version,
+                    training_mode,
+                    max(times[index] for index in fold.train),
+                    len(fold.train),
+                    version,
+                ],
+            )
+            persist_evidence_assessment(
+                self.connection,
+                final_evidence,
+                dataset_id=dataset.dataset_id,
+                model_version=version,
+            )
         except Exception:
             artifact_path.unlink(missing_ok=True)
             artifact_path.with_suffix(artifact_path.suffix + ".json").unlink(missing_ok=True)
             raise
-        return TrainingResult(version, model_type, artifact_path, test_metrics, dataset.dataset_id)
+        return TrainingResult(
+            version,
+            model_type,
+            artifact_path,
+            test_metrics,
+            dataset.dataset_id,
+            final_evidence.state,
+        )
 
     def _fit(
-        self, model_type: str, frame: pl.DataFrame, fold: Any
+        self,
+        model_type: str,
+        frame: pl.DataFrame,
+        fold: Any,
+        *,
+        parent_model: Any | None = None,
+        parent_cutoff: datetime | None = None,
     ) -> tuple[Any, np.ndarray, np.ndarray, dict[str, Any], list[str]]:
         if model_type in {"elo", "poisson", "dixon-coles"}:
+            if parent_model is not None:
+                raise ValueError(f"Warm-start is not implemented for {model_type}; use a versioned full refit")
             matches = self._matches(frame)
             train_matches = [matches[index] for index in fold.train]
             fixtures = [(matches[index][0], matches[index][1]) for index in fold.test]
@@ -188,6 +281,25 @@ class ModelTrainer:
         feature_columns = self._feature_columns(frame)
         matrix = frame.select(feature_columns).cast(pl.Float64).to_numpy()
         targets = self._targets(frame)
+        if parent_model is not None:
+            timestamps = frame["prediction_timestamp"].to_list()
+            incremental = np.asarray(
+                [index for index in fold.train if parent_cutoff is not None and timestamps[index] > parent_cutoff]
+            )
+            if not len(incremental):
+                raise ValueError("Warm-start candidate has no new chronological training observations")
+            if len(np.unique(targets[incremental])) < 2:
+                raise ValueError("Warm-start observations do not contain enough target classes")
+            ml_model = self._new_ml_model(model_type)
+            ml_model.fit_incremental(matrix[incremental], targets[incremental], parent_model)
+            validation_probabilities = self._ordered_probabilities(ml_model, matrix[fold.validation])
+            probabilities = self._ordered_probabilities(ml_model, matrix[fold.test])
+            hyperparameters = {
+                **ml_model.metadata(),
+                "candidate_generation": "warm_start",
+                "incremental_observations": len(incremental),
+            }
+            return ml_model, validation_probabilities, probabilities, hyperparameters, feature_columns
         candidates = self._ml_candidates(model_type)
         tuned = constrained_probability_search(
             candidates,
@@ -205,6 +317,33 @@ class ModelTrainer:
             "validation_log_loss": tuned.validation_log_loss,
         }
         return ml_model, validation_probabilities, probabilities, hyperparameters, feature_columns
+
+    def _new_ml_model(self, model_type: str) -> Any:
+        if model_type == "logistic":
+            return LogisticProbabilityModel(random_seed=self.random_seed)
+        if model_type == "catboost":
+            return CatBoostProbabilityModel(random_seed=self.random_seed, threads=self.cpu_threads)
+        if model_type == "lightgbm":
+            return LightGBMProbabilityModel(random_seed=self.random_seed, threads=self.cpu_threads)
+        raise ValueError(f"Warm-start is not supported for {model_type}")
+
+    def _load_parent(self, model_type: str, version: str) -> tuple[Any, datetime]:
+        row = self.connection.execute(
+            "SELECT model_type, artifact_path, coalesce(training_cutoff, training_end) FROM model_runs WHERE version=?",
+            [version],
+        ).fetchone()
+        if not row:
+            raise ValueError(f"Parent model {version!r} does not exist")
+        if row[0] != model_type:
+            raise ValueError(f"Parent model type {row[0]!r} does not match {model_type!r}")
+        loaders: dict[str, Any] = {
+            "logistic": LogisticProbabilityModel,
+            "catboost": CatBoostProbabilityModel,
+            "lightgbm": LightGBMProbabilityModel,
+        }
+        if model_type not in loaders:
+            raise ValueError(f"Warm-start is not supported for {model_type}")
+        return loaders[model_type].load(Path(row[1])), row[2]
 
     def _ml_candidates(self, model_type: str) -> list[tuple[dict[str, Any], Any]]:
         if model_type == "logistic":
