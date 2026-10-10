@@ -25,6 +25,7 @@ from sports_engine.models.statistical.dixon_coles import DixonColesModel
 from sports_engine.models.statistical.elo import EloModel
 from sports_engine.models.statistical.poisson import PoissonModel
 from sports_engine.sports.football.features.dataset import PointInTimeFeatureBuilder
+from sports_engine.training.temporal_split import split_by_time
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,13 @@ class PredictionResult:
     frame: pl.DataFrame
 
 
+@dataclass(frozen=True, slots=True)
+class TrainingDomain:
+    teams: frozenset[str]
+    competitions: frozenset[str]
+    lineage_available: bool
+
+
 class PredictionService:
     def __init__(
         self,
@@ -43,6 +51,7 @@ class PredictionService:
         windows: list[int],
         exponential_half_life: float,
         prediction_lead_hours: int,
+        historical_ledger_modes: list[str] | None = None,
         evidence_policy: EvidencePolicy | None = None,
         risk_policy: RiskPolicy | None = None,
     ) -> None:
@@ -53,6 +62,7 @@ class PredictionService:
             windows=windows,
             exponential_half_life=exponential_half_life,
             prediction_lead_hours=prediction_lead_hours,
+            historical_ledger_modes=historical_ledger_modes,
         )
         self.evidence_policy = evidence_policy or EvidencePolicy(0, 0, 0, 0, 10, True, 0.40)
         self.risk_policy = risk_policy or RiskPolicy(0.01, 0.05, 5, 0.25, 0.01, 0.03, 0.0)
@@ -66,8 +76,13 @@ class PredictionService:
         observed_at: datetime | None = None,
     ) -> PredictionResult:
         champion = self.connection.execute(
-            "SELECT model_type, version, artifact_path, calibration_method, metrics FROM model_runs "
-            "WHERE status='champion' ORDER BY created_at DESC LIMIT 1"
+            "SELECT mr.model_type, mr.version, mr.artifact_path, mr.calibration_method, mr.metrics, "
+            "mr.training_dataset_hash "
+            "FROM model_runs mr LEFT JOIN model_market_roles r ON r.model_version=mr.version "
+            "AND r.market_family='MATCH_ODDS' AND r.role_name='MATCH_ODDS_CHAMPION' AND r.state='CHAMPION' "
+            "WHERE r.role_id IS NOT NULL OR mr.status='champion' "
+            "ORDER BY CASE WHEN r.role_id IS NOT NULL THEN 0 ELSE 1 END, r.selected_at DESC NULLS LAST, "
+            "mr.created_at DESC LIMIT 1"
         ).fetchone()
         if not champion:
             raise NoEligibleModelError("No champion model is registered")
@@ -80,7 +95,7 @@ class PredictionService:
         )
         if frame.is_empty():
             raise ValueError(f"No unplayed {ledger_mode} fixtures found for {target_date}")
-        model_type, model_version, artifact_value, calibration_method, metrics_value = champion
+        model_type, model_version, artifact_value, calibration_method, metrics_value, dataset_hash = champion
         model_metrics = metrics_value if isinstance(metrics_value, dict) else json.loads(metrics_value)
         artifact_path = Path(artifact_value)
         manifest_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
@@ -88,6 +103,7 @@ class PredictionService:
             raise ValueError(f"Champion artifact or manifest is missing: {artifact_path}")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         model = self._load_model(model_type, artifact_path)
+        training_domain = self._training_domain(str(model_type), model, str(dataset_hash))
         probabilities = self._predict_probabilities(model_type, model, frame, manifest)
         if calibration_method:
             calibration_path = artifact_path.parent / "calibrator.pkl"
@@ -95,6 +111,22 @@ class PredictionService:
                 raise ValueError(f"Champion calibration artifact is missing: {calibration_path}")
             calibrator = pickle.loads(calibration_path.read_bytes())
             probabilities = calibrator.transform(probabilities)
+        calibration_row = self.connection.execute(
+            "SELECT state FROM calibration_validations WHERE model_version=? AND market_family='MATCH_ODDS' "
+            "ORDER BY validated_at DESC LIMIT 1",
+            [model_version],
+        ).fetchone()
+        role_row = self.connection.execute(
+            "SELECT state FROM model_market_roles WHERE model_version=? AND market_family='MATCH_ODDS' "
+            "AND role_name='MATCH_ODDS_CHAMPION' ORDER BY selected_at DESC LIMIT 1",
+            [model_version],
+        ).fetchone()
+        calibration_validated = bool(calibration_row and calibration_row[0] == "CALIBRATION_VALIDATED")
+        market_role_qualified = bool(role_row and role_row[0] == "CHAMPION")
+        uncertainty_policy = model_metrics.get("uncertainty_policy")
+        margin_policy = model_metrics.get("minimum_odds_policy")
+        uncertainty_validated = isinstance(uncertainty_policy, dict) and uncertainty_policy.get("validated") is True
+        margin_validated = isinstance(margin_policy, dict) and margin_policy.get("validated") is True
         prediction_run_id = str(uuid.uuid4())
         odds_time = self.connection.execute(
             "SELECT max(o.observed_at) FROM odds_snapshots o JOIN fixtures_current f USING (fixture_id) "
@@ -129,19 +161,38 @@ class PredictionService:
                     "WHERE state='BET_IF_PRICE_AVAILABLE' AND CAST(decision_timestamp AS DATE)=CAST(? AS DATE)",
                     [observed],
                 ).fetchone()
+                competition_row = self.connection.execute(
+                    "SELECT CAST(f.competition_season_id AS VARCHAR), d.universe_state "
+                    "FROM fixtures_current f LEFT JOIN competition_discoveries d "
+                    "USING (competition_season_id) WHERE CAST(f.fixture_id AS VARCHAR)=? "
+                    "ORDER BY d.discovered_at DESC NULLS LAST LIMIT 1",
+                    [str(row["fixture_id"])],
+                ).fetchone()
+                applicability_state, applicability_reasons = self._fixture_applicability(
+                    training_domain,
+                    home_team_id=str(row["home_team_id"]),
+                    away_team_id=str(row["away_team_id"]),
+                    competition_season_id=str(competition_row[0]) if competition_row else None,
+                )
+                fixture_applicable = applicability_state == "IN_DOMAIN"
                 decision = decide_wager(
                     probabilities_by_name,
                     quotes,
                     decision_time=observed,
                     fixture_kickoff=row["kickoff_utc"],
                     model_metrics=model_metrics,
-                    calibrated=bool(calibration_method),
+                    calibrated=calibration_validated,
                     home_history=int(row.get("home_history_matches") or 0),
                     away_history=int(row.get("away_history_matches") or 0),
                     evidence=self.evidence_policy,
                     risk=self.risk_policy,
                     current_daily_exposure=float(exposure_row[0]) if exposure_row else 0.0,
                     active_recommendations=int(exposure_row[1]) if exposure_row else 0,
+                    fixture_applicable=fixture_applicable,
+                    competition_actionable=bool(competition_row and competition_row[1] == "ACTIONABLE"),
+                    market_family_qualified=market_role_qualified,
+                    uncertainty_validated=uncertainty_validated,
+                    margin_threshold_validated=margin_validated,
                 )
                 decisions.append(decision)
                 self.connection.execute(
@@ -160,7 +211,8 @@ class PredictionService:
                     "model_probability, market_fair_probability, reference_decimal_odds, raw_implied_probability, "
                     "reference_expected_value, minimum_acceptable_odds, odds_observation_timestamp, "
                     "decision_timestamp, stake_fraction, reference_state, execution_edge, "
-                    "manual_price_confirmation_required) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "manual_price_confirmation_required, applicability_state, applicability_reason_codes) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [
                         str(uuid.uuid4()),
                         prediction_run_id,
@@ -180,6 +232,8 @@ class PredictionService:
                         decision.reference_state,
                         decision.execution_edge,
                         decision.manual_price_confirmation_required,
+                        applicability_state,
+                        json.dumps(applicability_reasons),
                     ],
                 )
             self.connection.commit()
@@ -235,6 +289,61 @@ class PredictionService:
             else pl.lit("MODEL_ONLY").alias("data_quality_status")
         )
         return PredictionResult(prediction_run_id, model_version, frame.height, output)
+
+    def _training_domain(self, model_type: str, model: Any, dataset_hash: str) -> TrainingDomain:
+        """Recover the exact chronological training domain; missing lineage fails closed."""
+        if model_type in {"poisson", "dixon-coles"}:
+            teams = frozenset(str(value) for value in getattr(model, "fitted_teams", ()))
+            competitions = frozenset(str(value) for value in getattr(model, "fitted_competitions", ()))
+            return TrainingDomain(teams, competitions, bool(teams and competitions))
+        row = self.connection.execute(
+            "SELECT parquet_path FROM feature_datasets WHERE dataset_hash=? ORDER BY created_at DESC LIMIT 1",
+            [dataset_hash],
+        ).fetchone()
+        if not row or not Path(str(row[0])).is_file():
+            return TrainingDomain(frozenset(), frozenset(), False)
+        frame = pl.read_parquet(Path(str(row[0])))
+        required = {"fixture_id", "prediction_timestamp", "home_team_id", "away_team_id"}
+        if not required <= set(frame.columns):
+            return TrainingDomain(frozenset(), frozenset(), False)
+        fold = split_by_time(frame["prediction_timestamp"].to_list())
+        training = frame[fold.train]
+        teams = frozenset(
+            str(value) for column in ("home_team_id", "away_team_id") for value in training[column].to_list()
+        )
+        fixture_ids = [str(value) for value in training["fixture_id"].to_list()]
+        if not fixture_ids:
+            return TrainingDomain(teams, frozenset(), False)
+        placeholders = ",".join("?" for _ in fixture_ids)
+        rows = self.connection.execute(
+            "SELECT DISTINCT CAST(competition_season_id AS VARCHAR) FROM fixtures_current "
+            f"WHERE CAST(fixture_id AS VARCHAR) IN ({placeholders})",
+            fixture_ids,
+        ).fetchall()
+        competitions = frozenset(str(value[0]) for value in rows)
+        return TrainingDomain(teams, competitions, bool(teams and competitions))
+
+    @staticmethod
+    def _fixture_applicability(
+        domain: TrainingDomain,
+        *,
+        home_team_id: str,
+        away_team_id: str,
+        competition_season_id: str | None,
+    ) -> tuple[str, tuple[str, ...]]:
+        if not domain.lineage_available:
+            return "OUT_OF_DOMAIN", ("TRAINING_LINEAGE_UNAVAILABLE",)
+        home_seen = home_team_id in domain.teams
+        away_seen = away_team_id in domain.teams
+        if not home_seen and not away_seen:
+            return "PRIOR_ONLY", ("UNSEEN_HOME_TEAM", "UNSEEN_AWAY_TEAM")
+        if not home_seen:
+            return "UNSEEN_HOME_TEAM", ("UNSEEN_HOME_TEAM",)
+        if not away_seen:
+            return "UNSEEN_AWAY_TEAM", ("UNSEEN_AWAY_TEAM",)
+        if competition_season_id not in domain.competitions:
+            return "UNSEEN_COMPETITION", ("UNSEEN_COMPETITION",)
+        return "IN_DOMAIN", ()
 
     def _quotes(self, fixture_id: str, prediction_time: datetime) -> list[MarketQuote]:
         rows = self.connection.execute(

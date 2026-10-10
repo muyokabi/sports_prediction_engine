@@ -10,6 +10,7 @@ from rich.table import Table
 from sports_engine.cli.runtime import open_database
 from sports_engine.core.config import load_config
 from sports_engine.models.registry import ModelRegistry
+from sports_engine.training.promotion import run_automated_promotion
 
 app = typer.Typer(help="Inspect model artifacts and promotion state.")
 console = Console()
@@ -60,18 +61,56 @@ def leaderboard() -> None:
     console.print(table)
 
 
+@app.command("assess-promotions")
+def assess_promotions(as_json: bool = typer.Option(False, "--json")) -> None:
+    """Run the same fail-closed promotion cycle used by the principal workflow."""
+    config = load_config()
+    connection = open_database(config)
+    try:
+        result = run_automated_promotion(connection, config)
+    finally:
+        connection.close()
+    payload = {
+        "assessed": list(result.assessed_versions),
+        "promoted": list(result.promoted_versions),
+        "withheld": list(result.withheld_versions),
+        "assessments": [
+            {
+                "version": item.version,
+                "market_family": item.market_family,
+                "state": item.state,
+                "reasons": list(item.reasons),
+            }
+            for item in result.assessments
+        ],
+    }
+    if as_json:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(
+        f"Promotion assessment: assessed={len(result.assessed_versions)} "
+        f"promoted={len(result.promoted_versions)} withheld={len(result.withheld_versions)}"
+    )
+    for item in result.assessments:
+        console.print(f"{item.version}: {item.state}; {', '.join(item.reasons) or 'all gates passed'}")
+
+
 @app.command("promote")
 def promote(version: str = typer.Argument(..., help="Candidate model version.")) -> None:
     config = load_config()
     connection = open_database(config)
     try:
-        ModelRegistry(connection).promote(version)
-    except ValueError as exc:
+        result = run_automated_promotion(connection, config, versions=(version,))
+        if version not in result.promoted_versions:
+            assessment = next((item for item in result.assessments if item.version == version), None)
+            reasons = ", ".join(assessment.reasons) if assessment else "candidate not found or not eligible"
+            raise ValueError(f"Automated governance withheld {version!r}: {reasons}")
+    except (OSError, RuntimeError, ValueError) as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2) from exc
     finally:
         connection.close()
-    console.print(f"Promoted [bold]{version}[/] to champion.")
+    console.print(f"Promoted [bold]{version}[/] to its validated market-family champion role.")
 
 
 @app.command("reject")

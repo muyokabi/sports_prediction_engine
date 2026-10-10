@@ -1,7 +1,7 @@
 import hashlib
 import json
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
@@ -15,8 +15,8 @@ from sports_engine.warehouse.repositories.request_log import latest_raw_path
 from sports_engine.warehouse.transactions import transaction
 
 
-class PaginatedProvider(Protocol):
-    def get_all_pages(
+class InjuryProvider(Protocol):
+    def get(
         self,
         endpoint: str,
         parameters: Mapping[str, Any],
@@ -24,7 +24,7 @@ class PaginatedProvider(Protocol):
         purpose: str,
         priority: Priority,
         job_run_id: str | None = None,
-    ) -> Iterator[dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +37,7 @@ class InjuryIngestionService:
     def __init__(
         self,
         connection: duckdb.DuckDBPyConnection,
-        provider: PaginatedProvider,
+        provider: InjuryProvider,
         raw_path_resolver: Callable[[str, str | None], str] | None = None,
     ) -> None:
         self.connection = connection
@@ -50,7 +50,7 @@ class InjuryIngestionService:
         purpose = f"injuries:{target_date.isoformat()}"
         observed = datetime.now(UTC)
         written = ignored = 0
-        for payload in self.provider.get_all_pages(
+        for payload in self.provider.get(
             Endpoint.INJURIES,
             {"date": target_date.isoformat()},
             purpose=purpose,
@@ -103,8 +103,9 @@ class InjuryIngestionService:
                 "retrieved_at=excluded.retrieved_at",
                 [player_id, player.get("name") or f"Player {player['id']}", observed, raw_path, observed],
             )
-            self.connection.execute(
-                "INSERT INTO injury_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            inserted = self.connection.execute(
+                "INSERT INTO injury_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (injury_observation_id) DO NOTHING RETURNING injury_observation_id",
                 [
                     observation_id,
                     fixture["id"],
@@ -118,5 +119,5 @@ class InjuryIngestionService:
                     raw_path,
                     job_run_id,
                 ],
-            )
-        return True
+            ).fetchone()
+        return inserted is not None

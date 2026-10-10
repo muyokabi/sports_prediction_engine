@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from sports_engine.evaluation.metrics import probability_integrity
 from sports_engine.models.calibration.multiclass import MulticlassProbabilityCalibrator
 from sports_engine.models.statistical.dixon_coles import DixonColesModel
 from sports_engine.models.statistical.elo import EloModel
@@ -66,3 +67,13 @@ def test_multiclass_calibration_preserves_probability_simplex(method: str) -> No
     assert calibrated.shape == probabilities.shape
     assert np.allclose(calibrated.sum(axis=1), 1.0)
     assert np.all((calibrated >= 0) & (calibrated <= 1))
+
+
+def test_probability_integrity_rejects_malformed_rows_and_detects_collapse() -> None:
+    valid = np.asarray([[0.5, 0.3, 0.2], [0.5, 0.3, 0.2]])
+    audit = probability_integrity(valid)
+    assert audit["passed"] is True
+    assert audit["largest_duplicate_cluster"] == 2
+    invalid = probability_integrity(np.asarray([[0.8, 0.3, -0.1]]))
+    assert invalid["passed"] is False
+    assert "PROBABILITY_OUT_OF_BOUNDS" in invalid["reasons"]

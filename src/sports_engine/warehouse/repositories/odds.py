@@ -5,6 +5,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
 import duckdb
+import polars as pl
 
 from sports_engine.core.ids import canonical_id
 from sports_engine.markets.implied_probability import no_vig_probabilities, raw_implied_probability
@@ -45,19 +46,23 @@ def store_odds_snapshot(
         ),
     )
     content_hash = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    latest = connection.execute(
-        "SELECT observed_at, content_hash FROM odds_snapshots WHERE fixture_id=? ORDER BY observed_at DESC LIMIT 1",
-        [fixture_id],
-    ).fetchone()
-    if latest and latest[1] == content_hash and observed - latest[0] <= timedelta(seconds=dedupe_seconds):
-        return False
-    snapshot_id = uuid.uuid5(
-        canonical_id("odds_snapshot", "api_football", provider_fixture_id),
-        f"{observed.isoformat()}:{content_hash}",
-    )
     provider_update = max(
         (price.provider_update_time for price in prices if price.provider_update_time is not None),
         default=None,
+    )
+    latest = connection.execute(
+        "SELECT observed_at, content_hash, provider_update_time FROM odds_snapshots "
+        "WHERE fixture_id=? ORDER BY observed_at DESC LIMIT 1",
+        [fixture_id],
+    ).fetchone()
+    if latest and latest[1] == content_hash:
+        within_collection_window = observed - latest[0] <= timedelta(seconds=dedupe_seconds)
+        unchanged_provider_observation = provider_update is not None and provider_update == latest[2]
+        if within_collection_window or unchanged_provider_observation:
+            return False
+    snapshot_id = uuid.uuid5(
+        canonical_id("odds_snapshot", "api_football", provider_fixture_id),
+        f"{observed.isoformat()}:{content_hash}",
     )
     connection.execute(
         "INSERT INTO odds_snapshots VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -97,21 +102,68 @@ def store_odds_snapshot(
                 fair[index],
                 margin,
             ]
-    connection.executemany(
-        "INSERT INTO bookmakers VALUES (?, ?, ?) ON CONFLICT (bookmaker_id) DO UPDATE SET name=excluded.name",
-        list(bookmakers.values()),
+    _bulk_insert(
+        connection,
+        "_incoming_bookmakers",
+        ["bookmaker_id", "provider_bookmaker_id", "name"],
+        [[str(row[0]), row[1], row[2]] for row in bookmakers.values()],
+        "INSERT INTO bookmakers SELECT * FROM _incoming_bookmakers "
+        "ON CONFLICT (bookmaker_id) DO UPDATE SET name=excluded.name",
     )
-    connection.executemany(
-        "INSERT INTO bet_markets VALUES (?, ?, ?) ON CONFLICT (market_id) DO UPDATE SET name=excluded.name",
-        list(markets.values()),
+    _bulk_insert(
+        connection,
+        "_incoming_markets",
+        ["market_id", "provider_market_id", "name"],
+        [[str(row[0]), row[1], row[2]] for row in markets.values()],
+        "INSERT INTO bet_markets SELECT * FROM _incoming_markets "
+        "ON CONFLICT (market_id) DO UPDATE SET name=excluded.name",
     )
     persist_observed_api_football_markets(connection)
-    connection.executemany(
-        "INSERT INTO bet_selections VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-        list(selections.values()),
+    _bulk_insert(
+        connection,
+        "_incoming_selections",
+        ["selection_id", "market_id", "name", "normalized_name", "line"],
+        [[str(row[0]), str(row[1]), row[2], row[3], row[4]] for row in selections.values()],
+        "INSERT INTO bet_selections SELECT * FROM _incoming_selections ON CONFLICT DO NOTHING",
     )
-    connection.executemany(
-        "INSERT INTO odds_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        list(price_rows.values()),
+    _bulk_insert(
+        connection,
+        "_incoming_prices",
+        [
+            "snapshot_id",
+            "bookmaker_id",
+            "market_id",
+            "selection_id",
+            "decimal_odds",
+            "raw_implied_probability",
+            "fair_probability",
+            "overround",
+        ],
+        [[str(row[0]), str(row[1]), str(row[2]), str(row[3]), *row[4:]] for row in price_rows.values()],
+        "INSERT INTO odds_prices SELECT * FROM _incoming_prices",
     )
     return True
+
+
+def _bulk_insert(
+    connection: duckdb.DuckDBPyConnection,
+    relation_name: str,
+    columns: list[str],
+    rows: list[list[object]],
+    statement: str,
+) -> None:
+    """Insert provider-sized batches through DuckDB's columnar scan path.
+
+    DuckDB's Python ``executemany`` executes once per row and made a normal
+    API-Football odds page take minutes when a fixture carried thousands of
+    prices. Registering a typed frame preserves the surrounding transaction
+    while turning the write into one set-based statement.
+    """
+    if not rows:
+        return
+    frame = pl.DataFrame(rows, schema=columns, orient="row", infer_schema_length=None)
+    connection.register(relation_name, frame)
+    try:
+        connection.execute(statement)
+    finally:
+        connection.unregister(relation_name)

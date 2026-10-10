@@ -1,12 +1,12 @@
 # Implementation Status
 
-Last audited: 2026-10-08 (Africa/Nairobi)
+Last audited: 2026-10-10 (Africa/Nairobi)
 
-Overall software state: `INSTITUTIONAL_SCALE_ACTIVE_CONTINUOUS_LEARNING`
+Overall software state: `PRODUCTION_ACTIONABLE_CONDITIONAL_EXECUTION_SUPPORT`
 
 Production current-season qualification: `VERIFIED`
 
-The connected account dynamically reports Pro and passed controlled 2026 qualification. Automated discovery now governs 1,240 current competition-seasons; 50 are admitted for production collection (10 actionable incumbents and 40 observation-only additions). A versioned, score-distribution Poisson champion is registered after chronological evaluation. Wager authorization remains independently gated by prices, freshness, uncertainty, quality and risk.
+The connected account dynamically reports Pro and passed controlled 2026 qualification. Automated discovery governs a broad current competition universe, but collection admission and provider `ACTIONABLE` state do not confer model/market actionability. Dixon-Coles version `dixon-coles-20261010T104725895417Z-39eeeebc` holds the audited `MATCH_ODDS_CHAMPION` role. Production decisions remain restricted to exact model/market/competition scopes that pass fixture applicability, calibration, walk-forward uncertainty, positive-margin, disagreement, bookmaker-breadth, and portfolio gates. API-Football reference odds are never treated as broker execution prices.
 
 Status is based on exercised behavior, not file presence. The master implementation specification is authoritative.
 
@@ -28,7 +28,7 @@ Status is based on exercised behavior, not file presence. The master implementat
 | Immutable raw payload and sidecar storage | VERIFIED | Integration test and live doctor payload. |
 | `sports-engine api quota` | VERIFIED | Displays persisted plan, active state, daily used/limit/remaining, minute limit/remaining and observation time without consuming a request. |
 
-Migrations: `001_core.sql` through `021_alertable_failures.sql`.
+Migrations: `001_core.sql` through `032_quarantine_legacy_asian_handicap_shadow.sql`.
 
 ## Phase 2 — Football reference data
 
@@ -61,13 +61,13 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 | Team statistics normalization/persistence | VERIFIED OFFLINE | Required nullable fields preserve zero-vs-null semantics and additional fields. |
 | Player statistics normalization/persistence | VERIFIED OFFLINE | Required nested statistics are flattened and original additional payload is retained. |
 | Transactional complete match package | VERIFIED PRODUCTION | Real 20-ID packages were validated and persisted atomically; interrupted writes roll back safely. |
-| Formal completeness and quarantine | VERIFIED PRODUCTION | Provider semantics now require rows and minutes for known participants, allow unused substitutes and optional/action/role nulls, and preserve all nulls. Current production totals are 276 eligible and 50 quarantined assessed fixtures. |
+| Formal completeness and quarantine | VERIFIED PRODUCTION | Provider semantics require rows and minutes for known participants, allow unused substitutes and optional/action/role nulls, and preserve all nulls. Current counts are reported from the final ledger in the autonomous upgrade report rather than frozen here. |
 
 ## Phase 5 — Daily updater
 
 | Requirement | Status | Evidence / limitation |
 |---|---|---|
-| Orchestration lock and job run | VERIFIED OFFLINE | `football daily` uses an exclusive file lock and persisted job-run lifecycle. |
+| Orchestration lock and job run | VERIFIED LIVE/OFFLINE | The principal workflow uses an exclusive PID lock and persisted lifecycle. A confirmed dead-PID lock is recovered; live/unreadable owners are retained. Orphaned same-name runs are closed as `INTERRUPTED` before restart. |
 | Global yesterday/today/tomorrow discovery | VERIFIED OFFLINE | Date-level calls are filtered locally to the selected production/replay ledger; integration test proves unrelated data is ignored. |
 | New-completion detection and <=20 enrichment | VERIFIED OFFLINE | Already ML-eligible fixtures are not fetched again; full detail uses batches where supported. |
 | Transactional normalization, quality and quarantine | VERIFIED OFFLINE / REPLAY EXERCISED | Atomic package, crash/resume and idempotency tests pass. Seven real 2024 fixtures across four leagues and four dates were assessed; all remained correctly quarantined because mandatory provider fields were `NULL`. |
@@ -82,7 +82,7 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 |---|---|---|
 | Odds schema and append-only grain | VERIFIED OFFLINE | Snapshot and price grain exercised; old observations are never overwritten. |
 | Odds parsing | VERIFIED OFFLINE | Bookmaker, market, selection, over/under line and handicap line extraction tested. |
-| Pagination and snapshot persistence | VERIFIED OFFLINE | Service consumes every provider page, stores known fixtures, reports unknown fixtures and deduplicates identical near-simultaneous observations; interruption between pages and safe rerun are tested. |
+| Pagination and snapshot persistence | VERIFIED LIVE/OFFLINE | Service consumes every page for scheduled `ACTIONABLE` league-season scopes, stores known fixtures, reports unknown fixtures and deduplicates unchanged provider observations. The final scoped acceptance stored 33/33 relevant fixtures with zero unknown fixtures. |
 | `football odds tomorrow` | IMPLEMENTED | Functional paginated command; it makes no request when selected ledger coverage says odds are unavailable. |
 | Implied probability, no-vig and overround | VERIFIED | Unit and repository integration tests. Consensus across bookmakers remains a Phase 12 consumer. |
 
@@ -95,13 +95,14 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 | Bounded repairs and backoff | VERIFIED OFFLINE | Migration 017 records attempts, next retry and missing components; exhausted/not-yet-due repairs are excluded. |
 | Resumable execution | VERIFIED OFFLINE | Detailed ingestion retains checkpoints and quota-stop behavior. |
 | `football backfill` | VERIFIED PRODUCTION | Status refresh, prioritization and enrichment are exercised. The run cap now applies to both batches and targeted repairs; checkpoints are bound to the exact candidate sequence. |
+| `football historical-backfill` | VERIFIED LIVE | Season-filtered replay enrichment preserves quota reserve and production isolation. A measured 2024 tranche made 205/238 selected fixtures eligible; combined replay history now contributes 241 of 3,203 training observations. |
 
 ## Phase 8 — Feature store
 
 | Requirement | Status | Evidence / limitation |
 |---|---|---|
 | Team-perspective history | VERIFIED OFFLINE | Home/away fixture rows are transformed into prior team histories with goals, shots, corners, possession, passing, discipline and player-rating aggregates. |
-| Point-in-time source cutoff | VERIFIED OFFLINE | A history row is usable only when its persisted source observation predates the prediction timestamp; automated tests inspect emitted cutoffs. |
+| Point-in-time source cutoff | VERIFIED OFFLINE | Completed results/statistics use reconstructable event time; odds, injuries and lineups retain observation-time cutoffs. Configured replay history can augment production training without becoming a production target. |
 | Configurable windows, season and EW histories | VERIFIED OFFLINE | Windows and half-life are configuration-driven; rolling form, attack/defence, venue, rest and congestion features are emitted. |
 | Elo and opponent adjustment | VERIFIED OFFLINE | Pre-match Elo is updated only after its source becomes known; opponent goal-difference adjustment is emitted. |
 | Odds features | VERIFIED PRODUCTION | Latest eligible fair consensus is restricted to snapshots at/before prediction time; current odds were paginated, normalized and persisted for eight associated fixtures. |
@@ -117,7 +118,7 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 | Elo | VERIFIED OFFLINE | Chronological fitting, normalized 1X2 probabilities, serialization and training registration are tested. |
 | Poisson | VERIFIED OFFLINE | Regularized team attack/defence, home effect, configurable time decay, score matrix, result, totals, BTTS and correct-score markets are tested. |
 | Dixon-Coles | VERIFIED OFFLINE | Time-decayed Poisson base plus fitted bounded low-score correction is tested. |
-| Training orchestration and registry metadata | VERIFIED OFFLINE | Latest/named content-addressed dataset loading, temporal holdouts, immutable artifact/manifest, versions, library versions, git commit, metrics and candidate registration are integration-tested. |
+| Training orchestration and registry metadata | VERIFIED OFFLINE | Latest/named content-addressed dataset loading, temporal holdouts, immutable artifact/manifest, versions, library versions, git commit, metrics, exact fitted competition-season lineage, and candidate registration are integration-tested. Old artifacts without lineage fail closed for competition applicability. |
 | `sports-engine train --model ...` | IMPLEMENTED | All six model types run through the real training service; missing prerequisites return exit 2. |
 
 ## Phase 10 — ML models
@@ -137,7 +138,7 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 | Probability and classification metrics | VERIFIED OFFLINE | Log loss, multiclass Brier, RPS, accuracy, balanced accuracy, ECE, calibration curves and confusion matrix are computed. |
 | Calibration | VERIFIED OFFLINE | Multiclass Platt and isotonic calibrators fit validation-only probabilities; calibrated and uncalibrated held-test metrics are retained. |
 | Bookmaker benchmark | VERIFIED OFFLINE | Prediction-time fair probabilities, mean absolute probability delta and closing snapshot benchmark (where available) remain independent evaluation results. |
-| Model promotion | VERIFIED OFFLINE | Candidate/champion/retired/rejected states are implemented; promotion requires log-loss and Brier improvement and bookmaker outperformance when that benchmark exists. |
+| Model promotion | VERIFIED LIVE/OFFLINE | Candidate/champion/retired/rejected states are implemented. Promotion requires calibrated holdout quality, bounded walk-forward uncertainty, incumbent non-inferiority, validated uncertainty and minimum-margin policy. A time-correct bookmaker baseline is mandatory when sufficiently available; API-Football baseline absence is recorded explicitly under the configured `when_available` policy rather than misclassified as model failure. |
 | Backtesting | VERIFIED OFFLINE | Chronological stored predictions use only contemporaneous odds; a wager requires both probability disagreement and positive expected value; immutable decisions and reports are tested. |
 | `sports-engine evaluate`, `models promote/reject`, `backtest` | IMPLEMENTED | Commands invoke real services and return meaningful prerequisite failures. |
 
@@ -150,7 +151,7 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 | Market comparison | VERIFIED OFFLINE | Model and fair market probabilities plus explicitly named probability differences are retained; differences are not labeled guaranteed edge. |
 | Immutable prediction persistence | VERIFIED OFFLINE | Prediction timestamp, cutoff, odds timestamp, model version and per-fixture probabilities append on repeat runs. |
 | `sports-engine predict tomorrow` | IMPLEMENTED | Terminal output includes fixture context, model/market probabilities, differences, quality, model version and odds time. |
-| First-class betting abstention | VERIFIED OFFLINE | Separate immutable decisions emit machine-readable `NO_BET` reasons, including stale/missing odds, insufficient evidence/history/calibration/confidence/edge/EV and exposure limits. |
+| First-class betting abstention | VERIFIED OFFLINE | Separate immutable decisions emit machine-readable `NO_BET` reasons. Five institutional gates are mandatory keyword-only inputs; missing/invalid odds, insufficient applicability, competition/market status, calibration, uncertainty, margin, EV, or exposure cannot silently pass. Migration 030 also persists fixture-level applicability on the secondary prediction path. |
 | Reference-odds semantics and bounded risk | VERIFIED LIVE/OFFLINE | Decisions use valid quotes observed at/before prediction time, retain age as visible information rather than a universal veto, select latest-per-bookmaker references, and enforce settlement-aware minimum acceptable odds plus bounded fractional-Kelly/exposure caps; bookmaker execution remains manual. |
 
 ## Cross-cutting requirements
@@ -165,17 +166,16 @@ Migrations: `001_core.sql` through `021_alertable_failures.sql`.
 
 - Implementation readiness: all specified software phases are implemented and offline-tested. Production provider qualification passed; data/model evidence accumulation is the remaining operational gate.
 - Replay/integration verification: all ten configured competitions were coverage-audited and bootstrapped for labeled 2024 replay: 192 team observations and 3,276 fixtures. Historical `odds=false` is preserved, so all remain production `admitted=false` and replay-only eligible.
-- Production verification: current-season access, all ten coverage admissions, 180 teams, 3,174 schedule fixtures, 20-ID detailed enrichment and current odds pagination are verified against the live provider. Of 326 assessed detailed fixtures, 276 are `ML_ELIGIBLE` and 50 remain quarantined.
-- Provider blocker: cleared. The configured evidence gate, rather than provider access, now prevents premature training/promotion: the production dataset has 276 rows against a minimum of 500.
+- Production verification: current-season access, batched detailed enrichment, injury collection and complete current-odds pagination are verified against the live provider. Exact final counts are maintained in the autonomous upgrade report.
+- Provider access is not the promotion blocker. Missing prospective, point-in-time market/shadow evidence and unvalidated uncertainty/margin policies correctly prevent premature actionability.
 
 ## Current validation baseline
 
-- `pytest`: 99 passed, entirely offline.
-- Coverage: 73% combined line/branch coverage. Critical services: provider client 80%, quota budget 84%, rate limiter 86%, pagination 100%, raw persistence 95%, fixture normalization 100%, backfill request cap 100%, daily/catch-up 92%, detailed ingestion 91%, odds ingestion 100%, feature dataset 93%, leakage audit 83%, prediction service 72%, training 92%.
-- `ruff format --check`: passed.
-- `ruff check`: passed.
-- `mypy`: passed over 139 source files.
-- Migrations: 001–021; clean-from-zero, forward migration and idempotency tests pass.
+- Final verification counts and commands are recorded in `docs/reports/AUTONOMOUS_INSTITUTIONAL_CODEBASE_UPGRADE_REPORT.md` so this status page does not retain a stale test snapshot.
+- Governance-focused branch run: 22 passed, 85% combined; decision 85%, applicability 79%, trainer 87%.
+- Migrations: 001–033; clean-from-zero, forward migration and idempotency tests pass.
+- Final regression baseline: 161 tests passed; Ruff passed; strict mypy passed over 161 source files; warehouse integrity passed.
+- Exact rerun audit: two unchanged-input tomorrow runs each persisted 2,827 market outputs with zero value or decision differences and three identical `PRODUCTION_ACTIONABLE` selections.
 - Package build: wheel and source distribution passed after resolving the declared Hatchling backend.
 - Live API: `/status` dynamically reported Pro, active, 7,500/day and 300/minute; current-season access passed. The latest persisted observation was 222 used / 7,278 remaining daily and 294 remaining per minute at 2026-10-08 00:26:09 +03:00. These are observations, not hardcoded plan mappings.
 
@@ -238,6 +238,15 @@ Current validation baseline after this stage: 112 offline tests passed; Ruff lin
 | Settlement/performance/drift loop | IMPLEMENTED | Migration 025 adds immutable prediction outcomes, model/league/market/time performance rollups and advisory drift signals. Daily and principal runs settle finalized prior predictions without mutation and refresh rollups; drift never replaces a champion automatically. |
 
 Migrations 001–025 are applied to production. Warehouse integrity passes. Ruff passes and strict mypy passes over 154 source files. The authoritative execution evidence and remaining limits are in `docs/reports/INSTITUTIONAL_SCALE_CONTINUOUS_LEARNING_ACCEPTANCE_REPORT.md`.
+
+## Shadow opportunity recovery — 2026-10-10
+
+The zero-candidate condition was traced to circular shadow/production gates and a stale score-model lifecycle. Statistical
+continuous learning, post-evaluation all-data refit, conservative shadow-only admission, portfolio caps, stale-run recovery,
+market-family allowlisting, Asian-handicap orientation correction, and legacy quarantine are implemented. Point-in-time
+replay `5b2a3b8d-e328-4f8b-af5c-fca87898fa94` persisted ten capped paper candidates from 165/165 terminal fixtures.
+They are not production approved; robust and execution edge remain null. See
+`docs/reports/ZERO_CANDIDATE_ROOT_CAUSE_AND_RECOVERY.md`.
 
 ## Final institutional pricing acceptance — 2026-10-08
 

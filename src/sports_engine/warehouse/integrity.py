@@ -59,6 +59,14 @@ def audit_integrity(
             "SELECT count(*) FROM prediction_runs pr LEFT JOIN model_runs mr "
             "ON mr.version=pr.model_version WHERE mr.model_run_id IS NULL"
         ),
+        "duplicate_market_champions": (
+            "SELECT count(*) FROM (SELECT market_family, role_name FROM model_market_roles "
+            "WHERE state='CHAMPION' GROUP BY ALL HAVING count(*)>1)"
+        ),
+        "invalid_market_champion_status": (
+            "SELECT count(*) FROM model_market_roles r LEFT JOIN model_runs mr ON mr.version=r.model_version "
+            "WHERE r.state='CHAMPION' AND (mr.model_run_id IS NULL OR mr.status<>'champion')"
+        ),
     }
     issues = []
     for name, sql in checks.items():

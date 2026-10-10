@@ -163,25 +163,45 @@ The command prints an analysis run ID and report path. Open the HTML under `arti
 ## Daily operator workflow
 
 ```powershell
-# 1. Local health, no provider quota
-uv run sports-engine doctor
-
-# 2. Provider state when operating live
-uv run sports-engine api quota
-
-# 3. Resumable football-ledger maintenance
-uv run sports-engine daily
-
-# 4. Complete-universe pricing
+# These are the normal operator commands. Run either or both as needed.
 uv run sports-engine run --date tomorrow
-
-# 5. Post-run assurance
-uv run sports-engine data integrity
+uv run sports-engine run --date today
 ```
 
-`daily` maintains the football ledger. `run` is the institutional analysis workflow. They remain separate so persisted evidence can be repriced and audited offline.
+These live commands are autonomous: preflight, catch-up, settlement, ledger repair, a bounded maintenance tranche, due-only model retraining, chronological evaluation, audited champion promotion, fresh requested-date odds, full-universe pricing, and the HTML report all run in sequence. Routine historical repair is capped at 100 API requests per invocation so delivery cannot silently become a full archive rebuild. `run --offline` deliberately skips provider calls, maintenance, training, and promotion and is visibly labelled `OFFLINE REPLAY`.
 
-A live `run` acquires a lock, refreshes account state, consumes every odds page, deduplicates unchanged observations, settles predictions, refreshes performance and research rollups, analyzes the full universe, writes seven fundamental prices per analyzed fixture, selects latest-per-bookmaker references, calculates thresholds and edges, persists decisions, and generates HTML.
+A live `run` selects only an audited market-role champion. Promotion requires probability integrity, chronological holdout and walk-forward uncertainty, calibration, fixture applicability, competition-specific validation, and incumbent quality. A timestamp-correct bookmaker baseline is compared whenever API-Football supplied enough historical snapshots; its absence is recorded as unavailable rather than falsely interpreted as model failure. Every assessment is persisted with gate evidence and reason codes.
+
+### Occasional maintenance — run separately
+
+Do not chain these to the daily prediction command. Run them in a separate terminal session only after the prior command has finished.
+
+```powershell
+# Weekly: fast local health checks (no provider quota)
+uv run sports-engine doctor
+uv run sports-engine data integrity
+uv run sports-engine football quality --summary --detailed
+
+# Weekly or when the report shows a repair backlog:
+# may consume substantial API quota and take a long time
+uv run sports-engine football backfill
+
+# Monthly, or before/after a major data/model change
+uv run sports-engine evaluate --all
+uv run sports-engine backtest --all
+uv run sports-engine models reliability --json
+
+# Only when intentionally adding depth from an already registered replay season;
+# keep the request cap explicit and run one season at a time
+uv run sports-engine football historical-backfill --season 2023 --max-requests 250
+
+# Before upgrades or major maintenance
+$backup = 'D:\sports-engine-backups\YYYY-MM-DD'
+uv run sports-engine data backup $backup
+uv run sports-engine data verify-backup $backup
+```
+
+Do not launch two write commands simultaneously. If a command is interrupted, rerun the same command; checkpointing, immutable raw evidence, stale-run recovery, and file locks are designed for restart rather than manual database edits.
 
 ## Complete command guide
 
@@ -203,6 +223,7 @@ uv run sports-engine models --help
 | `sports-engine run --date YYYY-MM-DD --days N` | Explicit inclusive window, 1–31 days |
 | `sports-engine run --date … --offline` | Persisted evidence only; no provider calls |
 | `sports-engine daily` | Principal idempotent football maintenance |
+| `sports-engine models assess-promotions` | Re-run audited fail-closed ML promotion assessment |
 | `sports-engine doctor` | Local configuration, schema, directory, and state checks |
 | `sports-engine doctor --connectivity` | Also verify provider connectivity |
 | `sports-engine doctor --connectivity --verify-current-season` | Explicit current-season probe |
@@ -234,7 +255,7 @@ Admission is explicit. A discoverable competition is not automatically productio
 # Teams and fixture skeletons for admitted competition-seasons
 uv run sports-engine football bootstrap
 
-# Normal resumable workflow; optional deliberate date override
+# Specialist maintenance commands (normally orchestrated by `sports-engine run`)
 uv run sports-engine football daily
 uv run sports-engine football daily --as-of 2026-10-08
 
@@ -344,8 +365,11 @@ For each bookmaker/market/selection, the engine selects the newest valid observa
 
 | Decision | Operator meaning |
 |---|---|
-| `BET_IF_PRICE_AVAILABLE` | Qualified positive discrepancy; check for at least the minimum odds |
-| `WATCH` | Positive signal exists but a qualification threshold is not met |
+| `RESEARCH_VALUE_SIGNAL` | Positive reference discrepancy, but one or more institutional gates are unvalidated |
+| `RESEARCH_ONLY` | Research price with no qualified positive signal |
+| `SHADOW_ACTIONABLE` | Structurally credible research candidate, but one or more production gates remain unvalidated |
+| `BET_IF_PRICE_AVAILABLE` | `PRODUCTION_ACTIONABLE` selection; execute only if the broker price is at or above the displayed minimum |
+| `WATCH` | Legacy compatibility state; current research uses explicit governance states |
 | `NO_BET` | Price, evidence, or risk requirements are not met |
 | `PRICE_TARGET` | Football price exists but no valid market reference exists |
 
@@ -353,7 +377,7 @@ Reference edge compares the model with API-Football. Execution edge remains unkn
 
 ### Minimum acceptable odds
 
-The threshold solves for the decimal price that meets the configured required robust expected return after uncertainty adjustment. Ordinary outcomes use their win/loss distribution. Push and Asian quarter-line markets use the complete settlement distribution, including half wins and half losses; they are never reduced to a binary shortcut.
+The threshold solves for the decimal price that meets an evidence-qualified required expected-return margin after a validated uncertainty adjustment. When either policy is absent, the displayed fair price is a research reference only and no `ROBUST_EXPECTED_RETURN` is claimed. Ordinary outcomes use their win/loss distribution. Push and Asian quarter-line markets use the complete settlement distribution, including half wins and half losses; they are never reduced to a binary shortcut.
 
 ### Strict invalidation and safety gates
 
@@ -365,8 +389,8 @@ Removing the age veto does not weaken other controls. Decisions remain blocked f
 - Splits are chronological train/validation/test periods; random splitting is forbidden.
 - ML tuning is deliberately small and CPU-bounded.
 - Platt or isotonic calibration fits only the validation holdout.
-- Walk-forward reports include log loss, Brier score, RPS, ECE, calibration curves, confusion matrices, and closing-market comparison where evidence exists.
-- Promotion requires improvement over the champion on held-out probability metrics and, where available, the bookmaker benchmark.
+- Walk-forward reports include log loss, Brier score, RPS, ECE, calibration curves, confusion matrices, chronological block-bootstrap intervals, paired market differences where timestamps permit, and closing-market comparison where evidence exists.
+- Promotion requires non-inferiority or improvement over the champion on held-out probability metrics and, where available, the timestamp-correct bookmaker benchmark.
 - Backtests use persisted predictions and only odds known at each historical prediction timestamp.
 
 Probabilities, market comparisons, and execution decisions are separate records. No result is reverse-engineered into an earlier prediction.
@@ -377,7 +401,9 @@ Scores alone do not make a fixture trainable. Completeness independently tracks 
 
 Unused substitutes need no match-performance row. Unknown upstream values remain `NULL`; known zero remains `0`. Eligibility is `ML_ELIGIBLE`, `NOT_ML_ELIGIBLE`, or `PENDING_REPAIR`. Problems are recorded in `data_quality_issues` and `data/quarantine/` with bounded repair attempts.
 
-Every feature row has a prediction timestamp, and only earlier observations may contribute. Injury availability is append-only. A zero-injury value is trusted only from a dated collection completed before the cutoff. Lineup strength requires an observation already known at that cutoff. An intervening team fixture makes football state genuinely stale and requires recomputation.
+Every feature row has a prediction timestamp. Completed-match results and statistics use `RECONSTRUCTED_EVENT_TIME` provenance with a conservative completion effective time; late database retrieval does not erase facts that were historically knowable. Odds, injuries, and lineup snapshots remain `OBSERVED_POINT_IN_TIME` and may contribute only when genuinely captured before the cutoff. A zero-injury value is trusted only from a dated collection completed before the cutoff. An intervening team fixture makes football state genuinely stale and requires recomputation.
+
+Fixture applicability is tied to immutable model lineage. New statistical artifacts record the exact competition-seasons represented by their chronological training rows; the secondary 1X2 prediction path reconstructs Elo/ML membership from the exact chronological training partition and persists its classification. A competition merely existing in the warehouse does not make it in-domain. Missing/older lineage, unseen teams, non-actionable competitions, missing market-family roles, and unvalidated uncertainty or margin policies all fail closed for betting actionability.
 
 ## Quota and provider behavior
 
@@ -475,7 +501,7 @@ uv run sports-engine data integrity
 | Principal-run lock exists | Confirm no engine process is active; inspect the lock/job ledger and follow the runbook—never blindly remove an active lock |
 | `NO_REFERENCE_ODDS` | Football pricing still exists; use the minimum as a price target, but do not fabricate a reference edge |
 | `AGED_REFERENCE` | The observation is older but not automatically invalid; check brokers and enforce minimum odds |
-| Zero conditional candidates | Inspect audit reasons; zero is legitimate and the engine never manufactures discrepancies |
+| Zero shadow candidates | Inspect quote freshness, fitted-domain coverage, competition state, history/prior gates, and the family allowlist. Production gates still block real execution. |
 | Low provider quota | Preserve the reserve; optional work will stop and resume later |
 
 Offline tests and `run --offline` remain usable without live credentials.

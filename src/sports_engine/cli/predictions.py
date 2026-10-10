@@ -31,6 +31,7 @@ def predict_tomorrow(
         windows=config.features.windows,
         exponential_half_life=config.features.exponential_half_life,
         prediction_lead_hours=config.features.prediction_lead_hours,
+        historical_ledger_modes=config.models.historical_training_ledgers,
         evidence_policy=EvidencePolicy(
             0,
             0,

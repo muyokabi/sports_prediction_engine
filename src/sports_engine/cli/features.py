@@ -23,6 +23,7 @@ def build(name: str = typer.Option("football-training"), as_json: bool = typer.O
             windows=config.features.windows,
             exponential_half_life=config.features.exponential_half_life,
             prediction_lead_hours=config.features.prediction_lead_hours,
+            historical_ledger_modes=config.models.historical_training_ledgers,
         ).build(name, ledger_mode=ledger_mode)
     except ValueError as exc:
         connection.close()

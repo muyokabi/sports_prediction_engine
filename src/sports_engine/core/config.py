@@ -1,7 +1,7 @@
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, PositiveFloat, PositiveInt
@@ -29,6 +29,27 @@ class FeatureConfig(BaseModel):
     prediction_lead_hours: PositiveInt = 24
 
 
+class ModelPromotionConfig(BaseModel):
+    enabled: bool = True
+    policy_version: str = "match-odds-v1"
+    market_family: str = "MATCH_ODDS"
+    minimum_evaluation_rows: PositiveInt = 200
+    minimum_baseline_rows: PositiveInt = 200
+    market_baseline_mode: Literal["required", "when_available"] = "required"
+    eligible_model_types: list[str] = ["poisson", "dixon-coles", "logistic", "catboost", "lightgbm"]
+    minimum_walk_forward_folds: PositiveInt = 4
+    maximum_expected_calibration_error: float = Field(default=0.08, ge=0, le=1)
+    maximum_fold_expected_calibration_error: float = Field(default=0.12, ge=0, le=1)
+    maximum_rps_upper_bound: float = Field(default=0.26, ge=0, le=1)
+    maximum_calibration_regression: float = Field(default=0.01, ge=0, le=1)
+    require_significant_market_outperformance: bool = True
+    base_required_expected_return: float = Field(default=0.02, ge=0, le=1)
+    minimum_uncertainty_adjustment: float = Field(default=0.01, ge=0, le=1)
+    maximum_uncertainty_adjustment: float = Field(default=0.10, ge=0, le=1)
+    minimum_competition_evaluation_rows: PositiveInt = 100
+    maximum_competition_expected_calibration_error: float = Field(default=0.08, ge=0, le=1)
+
+
 class ModelConfig(BaseModel):
     random_seed: int = 20261007
     cpu_threads: PositiveInt = 2
@@ -36,10 +57,13 @@ class ModelConfig(BaseModel):
     minimum_team_history: PositiveInt = 10
     require_calibration_for_betting: bool = True
     minimum_prediction_confidence: float = Field(default=0.40, ge=0, le=1)
+    historical_training_ledgers: list[str] = ["replay"]
+    promotion: ModelPromotionConfig = ModelPromotionConfig()
 
 
 class BackfillConfig(BaseModel):
     maximum_requests_per_run: int = Field(default=1000, ge=0)
+    maximum_daily_requests_per_run: int = Field(default=100, ge=0)
     repair_attempt_limit: PositiveInt = 3
 
 
@@ -57,6 +81,25 @@ class RiskConfig(BaseModel):
     hard_stake_cap: float = Field(default=0.01, gt=0, le=1)
     minimum_probability_advantage: float = Field(default=0.03, ge=0, le=1)
     minimum_expected_value: float = Field(default=0.0, ge=0)
+
+
+class ShadowCandidateConfig(BaseModel):
+    """Exploratory gates for prospective paper tracking, never live execution."""
+
+    enabled: bool = True
+    policy_version: str = "shadow-bootstrap-v1"
+    allowed_markets: list[str] = ["MATCH_ODDS", "BTTS", "TOTAL_GOALS"]
+    minimum_probability_advantage: float = Field(default=0.03, ge=0, le=1)
+    minimum_reference_expected_return: float = Field(default=0.03, ge=0, le=1)
+    required_expected_return: float = Field(default=0.03, ge=0, le=1)
+    uncertainty_buffer: float = Field(default=0.02, ge=0, le=1)
+    minimum_effective_team_matches: float = Field(default=5.0, ge=0)
+    maximum_prior_fraction: float = Field(default=0.40, ge=0, le=1)
+    maximum_absolute_probability_gap: float = Field(default=0.15, gt=0, le=1)
+    minimum_reference_bookmakers: PositiveInt = 2
+    maximum_candidates_per_fixture: PositiveInt = 1
+    maximum_candidates_per_run: PositiveInt = 10
+    stale_run_minutes: PositiveInt = 60
 
 
 class ApplicationMode(StrEnum):
@@ -84,6 +127,7 @@ class AppConfig(BaseModel):
     backfill: BackfillConfig = BackfillConfig()
     odds: OddsConfig = OddsConfig()
     risk: RiskConfig = RiskConfig()
+    shadow_candidates: ShadowCandidateConfig = ShadowCandidateConfig()
     provider_access: ProviderAccessConfig = ProviderAccessConfig()
 
     def absolute_paths(self) -> "AppConfig":

@@ -68,4 +68,37 @@ def probability_metrics(y_true: np.ndarray, probabilities: np.ndarray) -> dict[s
         "expected_calibration_error": expected_calibration_error(y_true, probabilities),
         "confusion_matrix": confusion_matrix(y_true, predictions, labels=[0, 1, 2]).tolist(),
         "calibration_curves": calibration_curve_data(y_true, probabilities),
+        "probability_integrity": probability_integrity(probabilities),
+    }
+
+
+def probability_integrity(probabilities: np.ndarray) -> dict[str, Any]:
+    """Audit probability geometry independently of realized outcomes."""
+    matrix = np.asarray(probabilities, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] != 3 or not len(matrix):
+        return {"passed": False, "reasons": ["INVALID_PROBABILITY_SHAPE"]}
+    reasons: list[str] = []
+    if not np.isfinite(matrix).all():
+        reasons.append("NON_FINITE_PROBABILITY")
+    if (matrix < 0).any() or (matrix > 1).any():
+        reasons.append("PROBABILITY_OUT_OF_BOUNDS")
+    normalization_error = float(np.max(np.abs(matrix.sum(axis=1) - 1.0)))
+    if normalization_error > 1e-8:
+        reasons.append("PROBABILITIES_NOT_NORMALIZED")
+    rounded = np.round(matrix, 6)
+    unique_rows, counts = np.unique(rounded, axis=0, return_counts=True)
+    clipped = np.clip(matrix, 1e-15, 1.0)
+    entropy = -np.sum(clipped * np.log(clipped), axis=1)
+    return {
+        "passed": not reasons,
+        "reasons": reasons,
+        "rows": len(matrix),
+        "maximum_normalization_error": normalization_error,
+        "minimum_probability": float(np.nanmin(matrix)),
+        "maximum_probability": float(np.nanmax(matrix)),
+        "unique_vectors_at_6dp": len(unique_rows),
+        "unique_vector_fraction": len(unique_rows) / len(matrix),
+        "largest_duplicate_cluster": int(counts.max()),
+        "mean_entropy": float(np.mean(entropy)),
+        "minimum_entropy": float(np.min(entropy)),
     }

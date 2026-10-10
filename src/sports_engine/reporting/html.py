@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from html import escape
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +17,7 @@ class FixtureAuditRow:
     odds_status: str = "NOT_EVALUATED"
     model_status: str = "NO_QUALIFIED_MODEL"
     dependency_state: str = "CLEAR"
+    applicability: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +66,7 @@ class OpportunityRow:
     price_movement: float | None = None
     bookmaker_dispersion: float | None = None
     execution_edge: float | None = None
+    reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +99,8 @@ class DailyAnalysisReport:
     newest_reference_age_minutes: float | None = None
     oldest_reference_age_minutes: float | None = None
     snapshots_collected_this_run: int = 0
+    report_mode: str = "LIVE"
+    source_live_run_id: str | None = None
 
 
 def _number(value: float | None, digits: int = 3) -> str:
@@ -120,8 +125,8 @@ def _model_rows(report: DailyAnalysisReport) -> str:
 def _opportunity_rows(report: DailyAnalysisReport) -> str:
     if not report.opportunities:
         return (
-            '<tr><td colspan="19" class="empty">No conditional market opportunities. Football prices and execution '
-            "targets remain available in the Market Board.</td></tr>"
+            '<tr><td colspan="20" class="empty">No conditional market opportunities: no production- or shadow-qualified rows. Research signals remain '
+            "available in the Market Board.</td></tr>"
         )
     return "".join(
         f'<tr data-league="{escape(row.competition)}" data-decision="{escape(row.decision)}">'
@@ -133,7 +138,7 @@ def _opportunity_rows(report: DailyAnalysisReport) -> str:
         f"<td>{_number(row.reference_age_minutes, 0)}m</td><td>{_number(row.market_probability)}</td>"
         f"<td>{_number(row.reference_edge)}</td><td>{_number(row.robust_edge)}</td>"
         f"<td>{_number(row.execution_edge)}</td><td>{escape(row.reference_state)}</td>"
-        f"<td>{escape(row.decision)}</td></tr>"
+        f"<td>{escape(row.decision)}</td><td>{escape(', '.join(row.reasons))}</td></tr>"
         for row in report.opportunities
     )
 
@@ -146,7 +151,7 @@ def _price_target_rows(report: DailyAnalysisReport) -> str:
         f"<td>{escape(row.bookmaker or '—')}</td><td>{_number(row.reference_age_minutes, 0)}m</td>"
         f"<td>{row.snapshot_count}</td><td>{_number(row.price_movement)}</td>"
         f"<td>{_number(row.bookmaker_dispersion)}</td><td>{escape(row.reference_state)}</td>"
-        f"<td>{escape(row.decision)}</td></tr>"
+        f"<td>{escape(row.decision)}</td><td>{escape(', '.join(row.reasons))}</td></tr>"
         for row in report.price_targets
     )
 
@@ -155,7 +160,13 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
     analyzed = sum(row.terminal_state == "ANALYZED" for row in report.fixtures)
     decision_counts = {
         decision: sum(row.decision == decision for row in report.price_targets)
-        for decision in ("BET_IF_PRICE_AVAILABLE", "WATCH", "NO_BET", "PRICE_TARGET")
+        for decision in (
+            "PRODUCTION_ACTIONABLE",
+            "SHADOW_ACTIONABLE",
+            "RESEARCH_VALUE_SIGNAL",
+            "RESEARCH_ONLY",
+            "PRICE_TARGET",
+        )
     }
     fixture_rows = "".join(
         f'<tr data-league="{escape(row.competition)}" data-state="{escape(row.terminal_state)}">'
@@ -165,19 +176,42 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
         f"<td>{escape(', '.join(row.reasons))}</td></tr>"
         for row in report.fixtures
     )
+
+    def football_detail(row: FixtureAuditRow) -> str:
+        item = row.applicability
+        if item is None:
+            return "Not priced until a qualified point-in-time engine exists."
+        probabilities = item.probabilities
+        return (
+            f"Applicability: {item.level} ({item.state}) · {escape(row.model_status)}<br>"
+            f"xG {item.expected_home_goals:.3f}–{item.expected_away_goals:.3f}; supremacy "
+            f"{item.expected_home_goals - item.expected_away_goals:.3f}; total "
+            f"{item.expected_home_goals + item.expected_away_goals:.3f}<br>"
+            f"1X2 {probabilities['home']:.3f} / {probabilities['draw']:.3f} / {probabilities['away']:.3f}; "
+            f"BTTS Y/N {probabilities['btts_yes']:.3f} / {probabilities['btts_no']:.3f}; "
+            f"O/U2.5 {probabilities['over_2_5']:.3f} / {probabilities['under_2_5']:.3f}<br>"
+            f"History H/A {item.home.observations}/{item.away.observations}; effective "
+            f"{item.home.effective_observations:.2f}/{item.away.effective_observations:.2f}; "
+            f"competition {item.competition_observations}<br>"
+            f"Parameters H atk/def {item.home_attack:.3f}/{item.home_defence:.3f}; "
+            f"A atk/def {item.away_attack:.3f}/{item.away_defence:.3f}; baseline "
+            f"{item.competition_baseline:.3f}; home advantage {item.home_advantage:.3f}<br>"
+            f"Decision gates: {escape(', '.join(item.reasons) or 'fixture evidence passed')}"
+        )
+
     research_panels = "".join(
         f"<details><summary><strong>{escape(row.fixture)}</strong><span>{escape(row.competition)} · "
         f'{escape(row.kickoff.isoformat())}</span><span class="state">{escape(row.terminal_state)}</span></summary>'
         '<div class="research-grid">'
         f"<section><h3>Match</h3><p>Dependency: {escape(row.dependency_state)}</p>"
         f"<p>Reasons: {escape(', '.join(row.reasons) or 'none')}</p></section>"
-        f'<section><h3>Football state</h3><p class="muted">{escape("Fundamental probabilities persisted from the qualified point-in-time champion." if row.model_status.startswith("FUNDAMENTAL:") else "Not priced until a qualified point-in-time engine exists.")}</p></section>'
+        f'<section><h3>Football state</h3><p class="muted">{football_detail(row)}</p></section>'
         f"<section><h3>Market</h3><p>Odds: {escape(row.odds_status)}</p></section>"
         f"<section><h3>Decision</h3><p>{escape(row.terminal_state)}</p></section></div></details>"
         for row in report.fixtures
     )
     warnings = []
-    if report.model_health != "QUALIFIED":
+    if report.model_health not in {"QUALIFIED", "CHAMPION_QUALIFIED"}:
         warnings.append(f"No actionable model: {report.model_health}")
     if report.no_reference_fixtures:
         warnings.append(
@@ -203,11 +237,14 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
     metrics = (
         ("Expected fixtures", len(report.fixtures)),
         ("Analyzed", analyzed),
-        ("Conditional candidates", decision_counts["BET_IF_PRICE_AVAILABLE"]),
-        ("Markets priced", report.markets_analyzed),
+        ("Shadow qualified", decision_counts["SHADOW_ACTIONABLE"]),
+        ("Production qualified", decision_counts["PRODUCTION_ACTIONABLE"]),
+        ("Research value signals", decision_counts["RESEARCH_VALUE_SIGNAL"]),
+        ("Market families priced", len({row.market.split()[0] for row in report.price_targets})),
+        ("Market lines priced", len({(row.fixture, row.market) for row in report.price_targets})),
+        ("Selections priced", report.markets_analyzed),
         ("Price targets only", decision_counts["PRICE_TARGET"]),
-        ("Watch", decision_counts["WATCH"]),
-        ("No bet", decision_counts["NO_BET"]),
+        ("Research only", decision_counts["RESEARCH_ONLY"]),
         ("Admitted leagues", report.admitted_leagues),
         ("Observation leagues", report.observation_leagues),
         ("Eligible history", report.eligible_fixtures),
@@ -228,6 +265,11 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
         f"<option>{escape(state)}</option>" for state in sorted({row.terminal_state for row in report.fixtures})
     )
     title = f"Institutional football pricing · {report.start_date} to {report.end_date}"
+    replay_banner = (
+        '<div class="warning"><strong>OFFLINE REPLAY — NO PROVIDER CALLS MADE IN THIS RENDER.</strong></div>'
+        if report.report_mode == "OFFLINE_REPLAY"
+        else ""
+    )
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)}</title><style>
@@ -257,16 +299,18 @@ details{{border:1px solid var(--line);background:var(--panel);margin:7px 0}}summ
 <div><span class="label">Last data update</span>{escape(str(report.last_data_update or "—"))}</div>
 <div><span class="label">Last odds update</span>{escape(str(report.last_odds_update or "—"))}</div>
 <div><span class="label">Provider / mode</span>{escape(report.provider)} · {escape(report.production_mode)}</div>
+<div><span class="label">Report mode</span>{escape(report.report_mode)}</div>
+<div><span class="label">Source live run</span>{escape(report.source_live_run_id or "—")}</div>
 <div><span class="label">Quota remaining</span>{escape(report.provider_quota)}</div>
 <div><span class="label">Data health</span>{escape(report.data_health)}</div>
 <div><span class="label">Model health</span>{escape(report.model_health)}</div></div></header>
-<nav>{nav}</nav><main>{warning_html}<section id="overview" class="tab active"><h2>Executive market board</h2>
-<div class="board">{metric_html}</div><div class="warning"><strong>MANUAL PRICE CONFIRMATION REQUIRED.</strong> Place only if your broker currently offers at least the displayed minimum acceptable odds. API-Football prices are reference observations, not guaranteed executable prices.</div><h2>Research state</h2><div class="panel">
+<nav>{nav}</nav><main>{replay_banner}{warning_html}<section id="overview" class="tab active"><h2>Executive market board</h2>
+<div class="board">{metric_html}</div><div class="warning"><strong>SHADOW ROWS ARE NOT BETTING PICKS. MANUAL PRICE CONFIRMATION REQUIRED.</strong> Use their minimum odds only for prospective paper tracking. Real-money consideration requires an explicit <code>PRODUCTION_ACTIONABLE / BET_IF_PRICE_AVAILABLE</code> decision plus a newly checked operator price. API-Football prices are reference observations, not guaranteed executable prices.</div><h2>Research state</h2><div class="panel">
 <p>Football pricing and market reference are separate: eligible history is <strong>{report.eligible_fixtures}</strong>; model state is <strong>{escape(report.model_health)}</strong>; market references are <strong>{escape(report.odds_health)}</strong>. Execution edge remains unknown until an operator checks a broker.</p>
 <p class="muted">No probability, price, or opportunity is inferred when persisted evidence is unavailable.</p></div></section>
-<section id="opportunities" class="tab"><h2>Top conditional opportunities</h2><p class="muted">Reference edge compares the model with API-Football. Execution edge is unknown until the operator supplies an actual broker price.</p><div class="filters"><select id="league-filter"><option value="">All leagues</option>{league_options}</select><select id="decision-filter"><option value="">All decisions</option><option>BET_IF_PRICE_AVAILABLE</option><option>WATCH</option></select></div><div class="panel"><table id="opportunity-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Reference bookmaker</th><th>Reference observed</th><th>Age</th><th>Market p</th><th>Reference edge</th><th>Robust estimate</th><th>Execution edge</th><th>Reference state</th><th>Decision</th></tr></thead><tbody>{_opportunity_rows(report)}</tbody></table></div></section>
+<section id="opportunities" class="tab"><h2>Top 10 decision candidates</h2><p class="muted">PRODUCTION_ACTIONABLE rows have passed every persisted evidence gate but still require a newly checked operator price. SHADOW_ACTIONABLE rows are prospective validation observations, not approved bets. Reference edge alone is not execution edge.</p><div class="filters"><select id="league-filter"><option value="">All leagues</option>{league_options}</select><select id="decision-filter"><option value="">All decisions</option><option>PRODUCTION_ACTIONABLE</option><option>SHADOW_ACTIONABLE</option></select></div><div class="panel"><table id="opportunity-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Reference bookmaker</th><th>Reference observed</th><th>Age</th><th>Market p</th><th>Reference edge</th><th>Robust estimate</th><th>Execution edge</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{_opportunity_rows(report)}</tbody></table></div></section>
 <section id="matches" class="tab"><h2>Fixture research panels</h2>{research_panels or '<div class="panel empty">No expected fixtures in this range.</div>'}</section>
-<section id="market" class="tab"><h2>Football price targets and API-Football references</h2><p class="muted">Latest-per-bookmaker references are used for comparison. Earlier snapshots contribute movement history only.</p><div class="panel"><table><thead><tr><th>Competition</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Bookmaker</th><th>Age</th><th>Snapshots</th><th>Movement</th><th>Dispersion</th><th>Reference state</th><th>Decision</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>
+<section id="market" class="tab"><h2>Football price targets and API-Football references</h2><p class="muted">Latest-per-bookmaker references are used for comparison. Earlier snapshots contribute movement history only. Gate reasons explain why a row is not production-actionable.</p><div class="panel"><table><thead><tr><th>Competition</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Bookmaker</th><th>Age</th><th>Snapshots</th><th>Movement</th><th>Dispersion</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>
 <section id="models" class="tab"><h2>Model health and continuous learning</h2><div class="panel"><table><thead><tr><th>Algorithm</th><th>Version</th><th>State</th><th>Parent</th><th>Train cutoff</th><th>Train</th><th>Validation</th><th>Test</th><th>New</th><th>Log loss</th><th>Brier</th><th>RPS</th><th>Calibration</th><th>Next trigger</th></tr></thead><tbody>{_model_rows(report)}</tbody></table></div></section>
 <section id="data" class="tab"><h2>Data health</h2><div class="board"><div class="metric"><span class="label">Eligible fixtures</span><span class="value">{report.eligible_fixtures}</span></div><div class="metric"><span class="label">Observation leagues</span><span class="value">{report.observation_leagues}</span></div><div class="metric"><span class="label">Odds health</span><span class="value">{escape(report.odds_health)}</span></div></div></section>
 <section id="audit" class="tab"><h2>Full universe audit</h2><div class="filters"><select id="audit-league"><option value="">All leagues</option>{league_options}</select><select id="audit-state"><option value="">All states</option>{state_options}</select></div><div class="panel"><table id="audit-table"><thead><tr><th>Competition</th><th>Fixture</th><th>Kickoff</th><th>State</th><th>Odds</th><th>Model</th><th>Reasons</th></tr></thead><tbody>{fixture_rows}</tbody></table></div></section></main>

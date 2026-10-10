@@ -165,7 +165,7 @@ def test_quality_integrity_and_backup_verification(tmp_path: Path) -> None:
     (project / "config" / "app.yaml").write_text("mode: development\n", encoding="utf-8")
     destination = tmp_path / "backup"
     manifest = create_backup(project, database_path, destination)
-    assert json.loads(manifest.read_text())["schema_version"] == 26
+    assert json.loads(manifest.read_text())["schema_version"] == 33
     verified = verify_backup(destination)
     assert verified.valid
     assert verified.row_counts["fixtures"] == 0
@@ -192,6 +192,14 @@ def test_file_lock_rejects_overlapping_job_and_recovers(tmp_path: Path) -> None:
         pass
     with FileLock(lock_path):
         assert lock_path.exists()
+    assert not lock_path.exists()
+
+
+def test_file_lock_recovers_when_recorded_process_no_longer_exists(tmp_path: Path) -> None:
+    lock_path = tmp_path / "daily.lock"
+    lock_path.write_text("2147483647", encoding="ascii")
+    with FileLock(lock_path):
+        assert int(lock_path.read_text(encoding="ascii")) > 0
     assert not lock_path.exists()
 
 

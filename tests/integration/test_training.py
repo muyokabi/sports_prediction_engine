@@ -77,7 +77,10 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     assert row[:3] == (model_type, "candidate", "dataset-hash-synthetic")
     assert json.loads(row[3])["test_rows"] == 6
     assert Path(row[4]).is_file()
-    assert row[5:] == ("RESEARCH_TRAINABLE", "full_refit", 18)
+    # The scheduler compares against all immutable dataset observations, not
+    # only the fitting partition; otherwise validation/test rows would make a
+    # freshly trained model immediately appear due again.
+    assert row[5:] == ("RESEARCH_TRAINABLE", "full_refit", 30)
     assert connection.execute(
         "SELECT count(*) FROM model_evidence_assessments WHERE model_type=?", [model_type]
     ).fetchone() == (2,)
@@ -85,6 +88,13 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     assert manifest["class_order"] == ["HOME", "DRAW", "AWAY"]
     assert manifest["random_seed"] == 7
     assert json.loads(row[3])["bookmaker_baseline"]["rows"] == 6
+    if model_type in {"elo", "poisson", "dixon-coles"}:
+        deployment = json.loads(row[3])["deployment_refit"]
+        assert deployment["performed"] is True
+        cutoff = connection.execute(
+            "SELECT training_cutoff FROM model_runs WHERE version=?", [result.version]
+        ).fetchone()[0]
+        assert cutoff == datetime(2025, 1, 30, tzinfo=UTC)
     connection.close()
 
 
@@ -172,4 +182,80 @@ def test_walk_forward_evaluation_writes_reproducible_report(tmp_path: Path) -> N
     assert report.aggregate_metrics["test_rows"] == 12
     assert report.aggregate_metrics["bookmaker_baseline"]["rows"] == 12
     assert report.path.is_file()
+    connection.close()
+
+
+def test_probability_scope_validation_is_bound_to_exact_model_and_fails_closed(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "scope-validation.duckdb")
+    migrate(connection)
+    _dataset(connection, tmp_path, row_count=90)
+    trained = ModelTrainer(connection, tmp_path / "artifacts", random_seed=7, cpu_threads=1).train(
+        "dixon-coles", dataset_name="synthetic"
+    )
+    evaluator = WalkForwardEvaluator(
+        connection,
+        tmp_path / "reports",
+        random_seed=7,
+        cpu_threads=1,
+        minimum_competition_rows=100,
+        maximum_competition_ece=0.08,
+    )
+    evaluator._persist_probability_scope_validations(
+        "dixon-coles",
+        "dataset-hash-synthetic",
+        {
+            "probability_forensics": {
+                "competition_metrics_minimum_30_rows": {
+                    "Small League": {
+                        "rows": 99,
+                        "log_loss": 1.0,
+                        "brier": 0.6,
+                        "rps": 0.2,
+                        "expected_calibration_error": 0.03,
+                        "probability_integrity": {"passed": True},
+                        "metric_uncertainty": {
+                            "log_loss": {"upper": 1.1},
+                            "brier": {"upper": 0.65},
+                        },
+                    },
+                    "Unstable League": {
+                        "rows": 120,
+                        "log_loss": 1.0,
+                        "brier": 0.6,
+                        "rps": 0.2,
+                        "expected_calibration_error": 0.12,
+                        "probability_integrity": {"passed": True},
+                        "metric_uncertainty": {
+                            "log_loss": {"upper": 1.1},
+                            "brier": {"upper": 0.65},
+                        },
+                    },
+                    "Validated League": {
+                        "rows": 120,
+                        "log_loss": 1.0,
+                        "brier": 0.6,
+                        "rps": 0.2,
+                        "expected_calibration_error": 0.03,
+                        "probability_integrity": {"passed": True},
+                        "metric_uncertainty": {
+                            "log_loss": {"upper": 1.1},
+                            "brier": {"upper": 0.65},
+                        },
+                    },
+                }
+            }
+        },
+        tmp_path / "report.json",
+        datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rows = connection.execute(
+        "SELECT scope_key, state, reason_codes FROM model_probability_scope_validations "
+        "WHERE model_version=? ORDER BY scope_key",
+        [trained.version],
+    ).fetchall()
+    assert rows[0][0:2] == ("Small League", "INSUFFICIENT_SAMPLE")
+    assert "INSUFFICIENT_COMPETITION_EVALUATION_ROWS" in json.loads(rows[0][2])
+    assert rows[1][0:2] == ("Unstable League", "FAILED")
+    assert "COMPETITION_CALIBRATION_ECE_EXCEEDED" in json.loads(rows[1][2])
+    assert rows[2][0:2] == ("Validated League", "VALIDATED")
     connection.close()

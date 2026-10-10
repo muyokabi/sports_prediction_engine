@@ -68,6 +68,7 @@ class BackfillPlanner:
         *,
         ledger_mode: str,
         estimated_mandatory_requests: int = 0,
+        provider_season: int | None = None,
     ) -> BackfillPlan:
         request_budget = self.quota_budget.backfill_budget(
             estimated_mandatory_requests,
@@ -80,12 +81,19 @@ class BackfillPlanner:
             "LEFT JOIN fixture_repair_state r USING (fixture_id) "
             "WHERE cs.ledger_mode=? AND f.status_short IN ('FT', 'AET', 'PEN') "
             "AND coalesce(q.eligibility, 'PENDING_REPAIR') <> 'ML_ELIGIBLE' "
+            "AND (? IS NULL OR cs.provider_season=?) "
             "AND coalesce(r.attempt_count, 0) < ? "
             "AND (r.next_retry_after IS NULL OR r.next_retry_after <= ?) "
             "ORDER BY coalesce(r.attempt_count, 0), f.kickoff_utc DESC",
-            [ledger_mode, self.repair_attempt_limit, datetime.now(UTC)],
+            [ledger_mode, provider_season, provider_season, self.repair_attempt_limit, datetime.now(UTC)],
         ).fetchall()
         candidate_count = len(rows)
-        fixture_capacity = request_budget * 20
+        # One batched /fixtures call covers up to twenty IDs, but completed
+        # skeletons normally still need at least one fixture-scoped statistics
+        # request. Budget for the observed lower bound n + ceil(n / 20)
+        # instead of the development-era fiction that one request enriches
+        # twenty complete fixtures. Additional repairs remain protected by the
+        # request-capped provider and checkpoint.
+        fixture_capacity = request_budget * 20 // 21
         selected = tuple(int(row[0]) for row in rows[:fixture_capacity])
         return BackfillPlan(selected, request_budget, candidate_count)

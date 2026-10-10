@@ -14,6 +14,7 @@ from sports_engine.core.exceptions import (
 
 
 class FailureCategory(StrEnum):
+    INTERRUPTED = "INTERRUPTED"
     PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
     AUTHENTICATION_FAILURE = "AUTHENTICATION_FAILURE"
     QUOTA_EXHAUSTION = "QUOTA_EXHAUSTION"
@@ -27,7 +28,9 @@ class FailureCategory(StrEnum):
     UNCLASSIFIED_FAILURE = "UNCLASSIFIED_FAILURE"
 
 
-def classify_failure(exc: Exception, job_name: str = "") -> FailureCategory:
+def classify_failure(exc: BaseException, job_name: str = "") -> FailureCategory:
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+        return FailureCategory.INTERRUPTED
     if isinstance(exc, ProviderAuthenticationError):
         return FailureCategory.AUTHENTICATION_FAILURE
     if isinstance(exc, (ProviderRateLimitError, QuotaExhaustedError)):

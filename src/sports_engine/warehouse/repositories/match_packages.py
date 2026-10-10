@@ -60,6 +60,24 @@ def _ensure_player(
     return player_id
 
 
+def _ensure_team(
+    connection: duckdb.DuckDBPyConnection,
+    provider_team_id: int,
+    name: str,
+    source_raw_path: str,
+    observed: datetime,
+) -> object:
+    team_id = canonical_id("team", "api_football", provider_team_id)
+    connection.execute(
+        "INSERT INTO teams (team_id, name, updated_at, source_raw_path, retrieved_at) "
+        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (team_id) DO UPDATE SET "
+        "name=excluded.name, updated_at=excluded.updated_at, "
+        "source_raw_path=excluded.source_raw_path, retrieved_at=excluded.retrieved_at",
+        [team_id, name, observed, source_raw_path, observed],
+    )
+    return team_id
+
+
 def _replace_events(
     connection: duckdb.DuckDBPyConnection,
     fixture_id: str,
@@ -207,6 +225,16 @@ def _replace_player_statistics(
     connection.execute("DELETE FROM player_match_statistics WHERE fixture_id=?", [fixture_id])
     seen_player_statistics: set[tuple[int, int]] = set()
     for team_payload in payloads:
+        team = team_payload.get("team") or {}
+        if not isinstance(team, dict) or team.get("id") is None:
+            continue
+        team_id = _ensure_team(
+            connection,
+            int(team["id"]),
+            str(team.get("name") or f"Team {team['id']}"),
+            source_raw_path,
+            observed,
+        )
         for record in normalize_player_statistics(team_payload):
             record_key = (record.provider_team_id, record.provider_player_id)
             if record_key in seen_player_statistics:
@@ -254,7 +282,7 @@ def _replace_player_statistics(
                 "INSERT INTO player_match_statistics VALUES (" + ",".join("?" for _ in range(38)) + ")",
                 [
                     fixture_id,
-                    canonical_id("team", "api_football", record.provider_team_id),
+                    team_id,
                     player_id,
                     *(_nested(stats, group, field) for group, field in fields),
                     json.dumps(stats),

@@ -46,9 +46,17 @@ class SeasonBootstrapService:
         )
         self.references = ReferenceDataService(connection, provider, self.raw_path_resolver)
 
-    def run(self, *, job_run_id: str | None = None, ledger_mode: str | None = None) -> BootstrapResult:
+    def run(
+        self,
+        *,
+        job_run_id: str | None = None,
+        ledger_mode: str | None = None,
+        provider_season: int | None = None,
+    ) -> BootstrapResult:
         seasons = admitted_seasons(self.connection, ledger_mode)
-        checkpoint_key = f"{self.checkpoint_key}.{ledger_mode or 'all'}"
+        if provider_season is not None:
+            seasons = [row for row in seasons if row[2] == provider_season]
+        checkpoint_key = f"{self.checkpoint_key}.{ledger_mode or 'all'}.{provider_season or 'all'}"
         progress = checkpoints.get(self.connection, checkpoint_key) or {"index": 0, "stage": "teams"}
         index = int(progress.get("index", 0))
         stage = str(progress.get("stage", "teams"))

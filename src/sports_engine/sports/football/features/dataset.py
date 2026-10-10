@@ -4,7 +4,7 @@ import math
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import fmean
 from typing import Any
@@ -33,6 +33,7 @@ class PointInTimeFeatureBuilder:
         windows: list[int],
         exponential_half_life: float,
         prediction_lead_hours: int,
+        historical_ledger_modes: list[str] | None = None,
     ) -> None:
         if not windows or any(window < 1 for window in windows):
             raise ValueError("At least one positive feature window is required")
@@ -41,9 +42,11 @@ class PointInTimeFeatureBuilder:
         self.windows = sorted(set(windows))
         self.half_life = exponential_half_life
         self.prediction_lead = timedelta(hours=prediction_lead_hours)
+        self.historical_ledger_modes = tuple(dict.fromkeys(historical_ledger_modes or ()))
 
     def build(self, name: str, *, ledger_mode: str) -> FeatureDatasetArtifact:
-        matches = self._matches(ledger_mode)
+        training_modes = self._training_modes(ledger_mode)
+        matches = self._matches(training_modes)
         if not matches:
             raise ValueError(f"No ML-eligible {ledger_mode} fixtures are available")
         histories: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -72,6 +75,7 @@ class PointInTimeFeatureBuilder:
                 "home_team_id": match["home_team_id"],
                 "away_team_id": match["away_team_id"],
                 "source_observation_max": source_max,
+                "historical_feature_provenance": "RECONSTRUCTED_EVENT_TIME",
                 "home_elo": ratings[match["home_team_id"]],
                 "away_elo": ratings[match["away_team_id"]],
                 "elo_difference": ratings[match["home_team_id"]] - ratings[match["away_team_id"]],
@@ -130,7 +134,10 @@ class PointInTimeFeatureBuilder:
                 )
             pending_elo.append(match)
         audit_observation_times(prediction_times, source_times)
-        frame = pl.DataFrame(rows)
+        # Backfilled seasons can have long early runs of null/integer values
+        # before a floating statistic appears. Infer across the complete frame
+        # so Polars does not lock a column to an incompatible prefix schema.
+        frame = pl.DataFrame(rows, infer_schema_length=None)
         feature_names = [
             name
             for name in frame.columns
@@ -145,7 +152,7 @@ class PointInTimeFeatureBuilder:
             }
         ]
         audit_feature_names(feature_names)
-        return self._write(name, ledger_mode, frame)
+        return self._write(name, ledger_mode, training_modes, frame)
 
     def build_prediction_frame(
         self,
@@ -168,10 +175,18 @@ class PointInTimeFeatureBuilder:
         ).fetchall()
         if not targets:
             return pl.DataFrame()
-        completed = self._matches(ledger_mode)
+        completed = self._matches(self._training_modes(ledger_mode))
+        for match in completed:
+            match["kickoff_utc"] = self._as_utc(match["kickoff_utc"])
+            match["source_observed_at"] = self._as_utc(match["source_observed_at"])
         rows: list[dict[str, Any]] = []
         for fixture_id, kickoff, home_team, away_team, competition, home_name, away_name in targets:
-            prediction_time = observed_at
+            # DuckDB returns TIMESTAMPTZ values in the connection timezone,
+            # while the live decision timestamp is UTC. Polars requires one
+            # timezone per datetime column, so normalize both event and
+            # observation times before row construction.
+            kickoff = self._as_utc(kickoff)
+            prediction_time = self._as_utc(observed_at)
             eligible_history = [
                 match
                 for match in completed
@@ -234,6 +249,7 @@ class PointInTimeFeatureBuilder:
                 "home_team_id": home_team,
                 "away_team_id": away_team,
                 "source_observation_max": max(known_sources, default=prediction_time),
+                "historical_feature_provenance": "RECONSTRUCTED_EVENT_TIME",
                 "home_elo": ratings[home_team],
                 "away_elo": ratings[away_team],
                 "elo_difference": ratings[home_team] - ratings[away_team],
@@ -254,15 +270,23 @@ class PointInTimeFeatureBuilder:
             row.update(self._availability_features(match, prediction_time))
             row.update(self._lineup_features(match, prediction_time))
             rows.append(row)
-        frame = pl.DataFrame(rows)
+        frame = pl.DataFrame(rows, infer_schema_length=None)
         audit_observation_times(frame["prediction_timestamp"].to_list(), frame["source_observation_max"].to_list())
         return frame
 
-    def _matches(self, ledger_mode: str) -> list[dict[str, Any]]:
+    def _training_modes(self, primary: str) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((primary, *self.historical_ledger_modes)))
+
+    def _matches(self, ledger_modes: tuple[str, ...]) -> list[dict[str, Any]]:
+        placeholders = ",".join("?" for _ in ledger_modes)
         rows = self.connection.execute(
             "SELECT CAST(f.fixture_id AS VARCHAR), f.kickoff_utc, "
             "CAST(f.home_team_id AS VARCHAR), CAST(f.away_team_id AS VARCHAR), "
-            "f.home_goals, f.away_goals, greatest(h.retrieved_at, a.retrieved_at), "
+            # Final scores and completed-match statistics are reconstructable
+            # event-time facts. Four hours after scheduled kickoff is a
+            # conservative effective time; retrieval time must not erase valid
+            # historical sequence merely because backfill happened later.
+            "f.home_goals, f.away_goals, f.kickoff_utc + INTERVAL 4 HOUR, "
             "h.shots_on_goal, h.total_shots, h.corner_kicks, h.ball_possession, h.total_passes, "
             "h.passes_percentage, h.fouls, h.yellow_cards, h.red_cards, "
             "a.shots_on_goal, a.total_shots, a.corner_kicks, a.ball_possession, a.total_passes, "
@@ -276,26 +300,32 @@ class PointInTimeFeatureBuilder:
             "GROUP BY fixture_id, team_id) hp ON hp.fixture_id=f.fixture_id AND hp.team_id=f.home_team_id "
             "LEFT JOIN (SELECT fixture_id, team_id, avg(rating) player_rating FROM player_match_statistics "
             "GROUP BY fixture_id, team_id) ap ON ap.fixture_id=f.fixture_id AND ap.team_id=f.away_team_id "
-            "WHERE cs.ledger_mode=? AND q.eligibility='ML_ELIGIBLE' "
+            f"WHERE cs.ledger_mode IN ({placeholders}) AND q.eligibility='ML_ELIGIBLE' "
             "AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL ORDER BY f.kickoff_utc",
-            [ledger_mode],
+            list(ledger_modes),
         ).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
             result.append(
                 {
                     "fixture_id": row[0],
-                    "kickoff_utc": row[1],
+                    "kickoff_utc": self._as_utc(row[1]),
                     "home_team_id": row[2],
                     "away_team_id": row[3],
                     "home_goals": row[4],
                     "away_goals": row[5],
-                    "source_observed_at": row[6],
+                    "source_observed_at": self._as_utc(row[6]),
                     "home_stats": self._stats(row[7:16], row[25]),
                     "away_stats": self._stats(row[16:25], row[26]),
                 }
             )
         return result
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @staticmethod
     def _stats(values: tuple[Any, ...], player_rating: Any) -> dict[str, Any]:
@@ -456,7 +486,13 @@ class PointInTimeFeatureBuilder:
     def _result(home_goals: int, away_goals: int) -> str:
         return "HOME" if home_goals > away_goals else "DRAW" if home_goals == away_goals else "AWAY"
 
-    def _write(self, name: str, ledger_mode: str, frame: pl.DataFrame) -> FeatureDatasetArtifact:
+    def _write(
+        self,
+        name: str,
+        ledger_mode: str,
+        training_modes: tuple[str, ...],
+        frame: pl.DataFrame,
+    ) -> FeatureDatasetArtifact:
         schema_payload = [(column, str(frame.schema[column])) for column in frame.columns]
         schema_hash = hashlib.sha256(json.dumps(schema_payload).encode()).hexdigest()
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -469,9 +505,13 @@ class PointInTimeFeatureBuilder:
         prediction_times = frame["prediction_timestamp"].to_list()
         config = {
             "ledger_mode": ledger_mode,
+            "training_ledger_modes": list(training_modes),
             "windows": self.windows,
             "exponential_half_life": self.half_life,
             "prediction_lead_hours": self.prediction_lead.total_seconds() / 3600,
+            "historical_feature_provenance": "RECONSTRUCTED_EVENT_TIME",
+            "time_sensitive_feature_provenance": "OBSERVED_POINT_IN_TIME",
+            "completed_match_effective_time": "scheduled_kickoff_plus_4_hours",
         }
         self.connection.execute(
             "INSERT INTO feature_datasets VALUES (?, ?, current_timestamp, ?, ?, ?, ?, ?, ?) "

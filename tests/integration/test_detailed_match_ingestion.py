@@ -505,7 +505,7 @@ def test_completeness_soak_reports_assessed_and_unassessed_counts(tmp_path: Path
     connection.close()
 
 
-def test_rerun_after_commit_before_checkpoint_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_checkpoint_failure_rolls_back_entire_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     connection = connect(tmp_path / "post-commit-crash.duckdb")
     migrate(connection)
     season_id = upsert_competition_season(
@@ -540,7 +540,7 @@ def test_rerun_after_commit_before_checkpoint_is_idempotent(tmp_path: Path, monk
     )
     with pytest.raises(RuntimeError, match="after commit"):
         service.run([100])
-    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (1,)
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (0,)
     monkeypatch.setattr(checkpoints, "put", real_put)
     assert service.run([100]).fixtures_eligible == 1
     assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (1,)
@@ -582,7 +582,8 @@ def test_batch_quota_interruption_resumes_without_duplicates(tmp_path: Path) -> 
         tmp_path / "quarantine",
         raw_path_resolver=lambda purpose, run_id: "details.json.gz",
     ).run([100, 101])
-    assert not interrupted.complete and interrupted.fixtures_eligible == 1 and interrupted.next_batch_index == 0
+    assert not interrupted.complete and interrupted.fixtures_eligible == 0 and interrupted.next_batch_index == 0
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (0,)
 
     class ResumedBatchProvider:
         def get(self, endpoint: str, parameters: Mapping[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
@@ -601,7 +602,7 @@ def test_batch_quota_interruption_resumes_without_duplicates(tmp_path: Path) -> 
     connection.close()
 
 
-def test_point_in_time_dataset_uses_only_prior_observed_matches(tmp_path: Path) -> None:
+def test_point_in_time_dataset_reconstructs_prior_completed_match_facts(tmp_path: Path) -> None:
     connection = connect(tmp_path / "features.duckdb")
     migrate(connection)
     season_id = upsert_competition_season(
@@ -625,7 +626,7 @@ def test_point_in_time_dataset_uses_only_prior_observed_matches(tmp_path: Path) 
             payload,
             assess_match_package(payload),
             source_raw_path=f"details-{index}.json.gz",
-            retrieved_at=kickoff + timedelta(days=1),
+            retrieved_at=kickoff + timedelta(days=30),
         )
     artifact = PointInTimeFeatureBuilder(
         connection,
@@ -637,9 +638,67 @@ def test_point_in_time_dataset_uses_only_prior_observed_matches(tmp_path: Path) 
     frame = pl.read_parquet(artifact.parquet_path)
     assert artifact.row_count == 3
     assert frame["home_goals_for_l3"].to_list() == [None, 1.0, 1.5]
+    assert frame["historical_feature_provenance"].unique().to_list() == ["RECONSTRUCTED_EVENT_TIME"]
     assert all(
         source <= prediction
         for source, prediction in zip(frame["source_observation_max"], frame["prediction_timestamp"], strict=True)
     )
     assert connection.execute("SELECT count(*) FROM feature_datasets").fetchone() == (1,)
+    connection.close()
+
+
+def test_production_dataset_can_use_replay_history_without_changing_ledger_target(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "cross-ledger-features.duckdb")
+    migrate(connection)
+    seasons = {
+        "replay": upsert_competition_season(
+            connection,
+            {"id": 39, "name": "League"},
+            {"year": 2024, "current": False, "coverage": {}},
+            admitted=False,
+            replay_eligible=True,
+            ledger_mode="replay",
+            reason="historical-training",
+            priority=1,
+        ),
+        "production": upsert_competition_season(
+            connection,
+            {"id": 39, "name": "League"},
+            {"year": 2026, "current": True, "coverage": {}},
+            admitted=True,
+            ledger_mode="production",
+            reason="qualified",
+            priority=1,
+        ),
+    }
+    for mode, provider_id, kickoff in (
+        ("replay", 301, datetime(2024, 5, 1, 12, tzinfo=UTC)),
+        ("production", 302, datetime(2026, 5, 1, 12, tzinfo=UTC)),
+    ):
+        payload = copy.deepcopy(_payload())
+        payload["fixture"]["id"] = provider_id
+        payload["fixture"]["date"] = kickoff.isoformat()
+        payload["league"]["season"] = kickoff.year
+        upsert_fixture(connection, normalize_fixture(payload), seasons[mode], f"fixture-{mode}.json.gz")
+        persist_match_package(
+            connection,
+            payload,
+            assess_match_package(payload),
+            source_raw_path=f"details-{mode}.json.gz",
+        )
+    artifact = PointInTimeFeatureBuilder(
+        connection,
+        tmp_path / "parquet",
+        windows=[3],
+        exponential_half_life=5,
+        prediction_lead_hours=24,
+        historical_ledger_modes=["replay"],
+    ).build("combined", ledger_mode="production")
+    frame = pl.read_parquet(artifact.parquet_path).sort("prediction_timestamp")
+    assert artifact.row_count == 2
+    assert frame["fixture_id"].to_list() == [
+        str(connection.execute("SELECT fixture_id FROM fixtures WHERE provider_fixture_id=301").fetchone()[0]),
+        str(connection.execute("SELECT fixture_id FROM fixtures WHERE provider_fixture_id=302").fetchone()[0]),
+    ]
+    assert frame["home_history_matches"].to_list() == [0, 1]
     connection.close()

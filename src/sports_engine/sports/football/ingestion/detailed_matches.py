@@ -14,7 +14,7 @@ from sports_engine.providers.api_football.endpoints import Endpoint
 from sports_engine.providers.api_football.errors import ApiFootballPlanRestrictionError
 from sports_engine.providers.base import SportsDataProvider
 from sports_engine.sports.football.ingestion.match_enrichment import fixture_batches
-from sports_engine.sports.football.quality.completeness import assess_match_package
+from sports_engine.sports.football.quality.completeness import QualityAssessment, assess_match_package
 from sports_engine.warehouse import checkpoints
 from sports_engine.warehouse.repositories.match_packages import persist_match_package
 from sports_engine.warehouse.repositories.request_log import latest_raw_path
@@ -91,6 +91,7 @@ class DetailedMatchIngestionService:
             except QuotaExhaustedError:
                 self._save_checkpoint(index, batch_signature, job_run_id)
                 return DetailedIngestionResult(False, received, eligible, quarantined, index)
+            processed: list[tuple[dict[str, object], QualityAssessment, str]] = []
             for payload, raw_path in packages:
                 received += 1
                 assessment = assess_match_package(payload)
@@ -103,11 +104,15 @@ class DetailedMatchIngestionService:
                     assessment = assess_match_package(payload)
                 except QuotaExhaustedError:
                     self._save_checkpoint(index, batch_signature, job_run_id)
-                    return DetailedIngestionResult(False, received - 1, eligible, quarantined, index)
+                    return DetailedIngestionResult(False, received - len(processed) - 1, eligible, quarantined, index)
                 if assessment.eligibility != Eligibility.ML_ELIGIBLE:
                     self._quarantine(payload, assessment.missing, raw_path)
-                    quarantined += 1
-                with transaction(self.connection):
+                processed.append((payload, assessment, raw_path))
+            # A provider page is the recovery unit. Persist the full batch and
+            # advance its checkpoint atomically so interruption cannot skip the
+            # uncommitted tail of a twenty-fixture page.
+            with transaction(self.connection):
+                for payload, assessment, raw_path in processed:
                     fixture_id = persist_match_package(
                         self.connection,
                         payload,
@@ -121,6 +126,7 @@ class DetailedMatchIngestionService:
                             [fixture_id],
                         )
                     else:
+                        quarantined += 1
                         attempt = self._record_repair_attempt(fixture_id, assessment.missing)
                         self.connection.execute(
                             "INSERT INTO data_quality_issues "

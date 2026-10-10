@@ -25,8 +25,29 @@ models:
   minimum_team_history: 10
   require_calibration_for_betting: true
   minimum_prediction_confidence: 0.40
+  historical_training_ledgers: [replay]
+  promotion:
+    enabled: true
+    policy_version: match-odds-api-football-v2
+    market_family: MATCH_ODDS
+    market_baseline_mode: when_available
+    eligible_model_types: [poisson, dixon-coles]
+    minimum_evaluation_rows: 200
+    minimum_baseline_rows: 200
+    minimum_walk_forward_folds: 4
+    maximum_expected_calibration_error: 0.08
+    maximum_fold_expected_calibration_error: 0.12
+    maximum_rps_upper_bound: 0.26
+    maximum_calibration_regression: 0.01
+    require_significant_market_outperformance: true
+    base_required_expected_return: 0.02
+    minimum_uncertainty_adjustment: 0.01
+    maximum_uncertainty_adjustment: 0.10
+    minimum_competition_evaluation_rows: 100
+    maximum_competition_expected_calibration_error: 0.08
 backfill:
   maximum_requests_per_run: 1000
+  maximum_daily_requests_per_run: 100
   repair_attempt_limit: 3
 odds:
   target_days_ahead: 1
@@ -40,6 +61,21 @@ risk:
   hard_stake_cap: 0.01
   minimum_probability_advantage: 0.03
   minimum_expected_value: 0.0
+shadow_candidates:
+  enabled: true
+  policy_version: shadow-bootstrap-v1
+  allowed_markets: [MATCH_ODDS, BTTS, TOTAL_GOALS]
+  minimum_probability_advantage: 0.03
+  minimum_reference_expected_return: 0.03
+  required_expected_return: 0.03
+  uncertainty_buffer: 0.02
+  minimum_effective_team_matches: 5.0
+  maximum_prior_fraction: 0.40
+  maximum_absolute_probability_gap: 0.15
+  minimum_reference_bookmakers: 2
+  maximum_candidates_per_fixture: 1
+  maximum_candidates_per_run: 10
+  stale_run_minutes: 60
 provider_access:
   replay_season: 2024
 

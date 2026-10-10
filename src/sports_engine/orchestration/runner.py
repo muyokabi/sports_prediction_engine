@@ -21,15 +21,25 @@ def job_run(
     summary: JobSummary,
     application_mode: str | None = None,
 ) -> Iterator[str]:
+    started_at = datetime.now(UTC)
+    # A process crash cannot execute the context-manager exception path. The
+    # next serialized run therefore closes any same-name orphan explicitly,
+    # preserving an honest audit trail instead of leaving it "running" forever.
+    connection.execute(
+        "UPDATE job_runs SET finished_at=?, status='failed', "
+        "error_message='Recovered abandoned running job before restart', error_category='INTERRUPTED' "
+        "WHERE job_name=? AND status='running'",
+        [started_at, job_name],
+    )
     job_run_id = str(uuid.uuid4())
     connection.execute(
         "INSERT INTO job_runs (job_run_id, job_name, started_at, status, application_mode) "
         "VALUES (?, ?, ?, 'running', ?)",
-        [job_run_id, job_name, datetime.now(UTC), application_mode],
+        [job_run_id, job_name, started_at, application_mode],
     )
     try:
         yield job_run_id
-    except Exception as exc:
+    except BaseException as exc:
         category = classify_failure(exc, job_name)
         connection.execute(
             "UPDATE job_runs SET finished_at=?, status='failed', metrics=?, error_message=?, "

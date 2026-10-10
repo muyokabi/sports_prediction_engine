@@ -1,4 +1,4 @@
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -45,7 +45,7 @@ def test_injuries_are_append_only_and_unknown_teams_are_ignored(tmp_path: Path) 
     )
 
     class Provider:
-        def get_all_pages(
+        def get(
             self,
             endpoint: str,
             parameters: Mapping[str, Any],
@@ -53,17 +53,19 @@ def test_injuries_are_append_only_and_unknown_teams_are_ignored(tmp_path: Path) 
             purpose: str,
             priority: Priority,
             job_run_id: str | None = None,
-        ) -> Iterator[dict[str, Any]]:
-            yield {
-                "fixture": {"id": 100},
-                "team": {"id": 10, "name": "Home"},
-                "player": {"id": 500, "name": "Player", "type": "Missing Fixture", "reason": "Hamstring"},
-            }
-            yield {
-                "fixture": {"id": 999},
-                "team": {"id": 999, "name": "Unknown"},
-                "player": {"id": 501, "name": "Unknown", "type": "Missing Fixture", "reason": "Knock"},
-            }
+        ) -> list[dict[str, Any]]:
+            return [
+                {
+                    "fixture": {"id": 100},
+                    "team": {"id": 10, "name": "Home"},
+                    "player": {"id": 500, "name": "Player", "type": "Missing Fixture", "reason": "Hamstring"},
+                },
+                {
+                    "fixture": {"id": 999},
+                    "team": {"id": 999, "name": "Unknown"},
+                    "player": {"id": 501, "name": "Unknown", "type": "Missing Fixture", "reason": "Knock"},
+                },
+            ]
 
     result = InjuryIngestionService(
         connection,

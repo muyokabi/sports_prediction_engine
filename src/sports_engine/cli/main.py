@@ -30,7 +30,9 @@ def daily() -> None:
     """Run the principal idempotent daily workflow."""
     from sports_engine.cli.football import daily as football_daily
 
-    football_daily()
+    # Call the command implementation directly with a real value rather than
+    # Typer's OptionInfo default.
+    football_daily(as_of=None)
 
 
 @app.command("run")
@@ -49,10 +51,25 @@ def run_analysis(
     from sports_engine.orchestration.locks import FileLock
     from sports_engine.orchestration.runner import job_run
     from sports_engine.sports.football.ingestion.odds import OddsIngestionService
-    from sports_engine.training.feedback import refresh_performance_rollups, settle_completed_predictions
+    from sports_engine.training.feedback import (
+        refresh_performance_rollups,
+        settle_completed_predictions,
+        settle_shadow_opportunities,
+    )
+    from sports_engine.warehouse.integrity import audit_integrity
 
     config = load_config()
     requested = resolve_analysis_dates(target_date, timezone=config.timezone, days=days)
+    learning = None
+    if not offline:
+        from sports_engine.cli.doctor import run_doctor
+        from sports_engine.cli.football import daily as football_daily
+
+        if not run_doctor(connectivity=False, verify_current_season=False):
+            raise typer.Exit(2)
+        # The principal command owns routine catch-up, enrichment, repair,
+        # surplus backfill, settlement, feature feedback, and prediction work.
+        learning = football_daily(as_of=None)
     connection = open_database(config)
     ledger_mode = "replay" if config.mode == ApplicationMode.DEVELOPMENT else "production"
     odds_payloads = odds_snapshots = unmatched = 0
@@ -62,6 +79,8 @@ def run_analysis(
             FileLock(config.state_dir / "principal-run.lock"),
             job_run(connection, "institutional.run", summary, config.mode.value) as run_id,
         ):
+            if learning:
+                summary.warnings.extend(learning.errors)
             if not offline and ledger_mode == "production":
                 with provider_client(config, connection) as client:
                     client.get_status(purpose="institutional_run_status", job_run_id=run_id)
@@ -78,12 +97,18 @@ def run_analysis(
                             [ledger_mode, config.timezone, analysis_date],
                         ).fetchone()
                         if fixture_count and fixture_count[0]:
-                            odds_result = odds_service.run(analysis_date, job_run_id=run_id)
+                            odds_result = odds_service.run(
+                                analysis_date,
+                                job_run_id=run_id,
+                                ledger_mode=ledger_mode,
+                                timezone=config.timezone,
+                            )
                             odds_payloads += odds_result.payloads_seen
                             odds_snapshots += odds_result.snapshots_written
                             unmatched += odds_result.fixtures_not_in_ledger
                 summary.odds_snapshots_written = odds_snapshots
             settlement = settle_completed_predictions(connection)
+            shadow_settlement = settle_shadow_opportunities(connection)
             refresh_performance_rollups(connection)
             refresh_odds_age_research(connection)
             result = AnalysisService(
@@ -92,20 +117,32 @@ def run_analysis(
                 aged_reference_minutes=config.odds.aged_reference_minutes,
                 minimum_probability_advantage=config.risk.minimum_probability_advantage,
                 required_robust_ev=config.risk.minimum_expected_value,
+                maximum_production_candidates_per_run=config.risk.maximum_simultaneous_recommendations,
+                shadow_policy=config.shadow_candidates,
             ).run(
                 requested.start,
                 requested.end,
                 timezone=config.timezone,
                 ledger_mode=ledger_mode,
                 job_run_id=run_id,
+                report_mode="OFFLINE_REPLAY" if offline else "LIVE",
             )
+            integrity_issues = audit_integrity(connection)
+            if integrity_issues:
+                summary.errors.extend(f"{issue.check}={issue.count}" for issue in integrity_issues)
+                raise RuntimeError("Post-run warehouse integrity audit failed: " + ", ".join(summary.errors))
     finally:
         connection.close()
     typer.echo(
         f"Analysis {result.analysis_run_id}: {result.state}; expected={result.expected_fixtures}; "
         f"terminal={result.terminal_fixtures}; odds_payloads={odds_payloads}; "
         f"odds_snapshots={odds_snapshots}; unmatched_odds_fixtures={unmatched}; report={result.report_path}"
-        f"; settled_predictions={settlement.predictions_settled}"
+        f"; settled_predictions={settlement.predictions_settled}; "
+        f"settled_shadow={shadow_settlement.opportunities_settled}; "
+        f"ml_due={len(learning.due_models) if learning else 0}; "
+        f"ml_trained={len(learning.trained_versions) if learning else 0}; "
+        f"ml_promoted={len(learning.promoted_versions) if learning else 0}; "
+        f"ml_withheld={len(learning.withheld_versions) if learning else 0}"
     )
 
 
@@ -171,6 +208,8 @@ def evaluate(
         random_seed=config.models.random_seed,
         cpu_threads=config.models.cpu_threads,
         time_decay_half_life_days=config.models.time_decay_half_life_days,
+        minimum_competition_rows=config.models.promotion.minimum_competition_evaluation_rows,
+        maximum_competition_ece=config.models.promotion.maximum_competition_expected_calibration_error,
     )
     try:
         for model_type in MODEL_TYPES if all_models else (model,):

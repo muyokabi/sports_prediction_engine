@@ -1,9 +1,11 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from sports_engine.models.registry import ModelRegistry, ModelRun
-from sports_engine.training.scheduler import UpdateTrigger, assess_model_update
+from sports_engine.training.continuous import _train_due_candidate
+from sports_engine.training.scheduler import UpdateDecision, UpdateTrigger, assess_model_update
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
 
@@ -52,3 +54,21 @@ def test_drift_can_trigger_review_before_batch_threshold(tmp_path: Path) -> None
     assert decision.due
     assert UpdateTrigger.DRIFT in decision.triggers
     connection.close()
+
+
+def test_due_ml_update_falls_back_to_immutable_full_refit() -> None:
+    calls: list[dict[str, object]] = []
+
+    class Trainer:
+        def train(self, _model_type: str, **kwargs: object) -> object:
+            calls.append(kwargs)
+            if kwargs["training_mode"] == "warm_start":
+                raise ValueError("feature schema changed")
+            return SimpleNamespace(version="replacement")
+
+    decision = UpdateDecision("logistic", "parent", True, 100, (UpdateTrigger.NEW_OBSERVATIONS,), "warm_start")
+    result = _train_due_candidate(Trainer(), decision, "dataset")  # type: ignore[arg-type]
+    assert result.version == "replacement"
+    assert [call["training_mode"] for call in calls] == ["warm_start", "full_refit"]
+    assert calls[0]["parent_model_version"] == "parent"
+    assert "parent_model_version" not in calls[1]

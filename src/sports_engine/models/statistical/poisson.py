@@ -25,6 +25,10 @@ class PoissonModel:
     intercept: float = 0.0
     home_advantage: float = 0.0
     fitted_teams: tuple[str, ...] = ()
+    # Populated by the trainer from the exact chronological training rows.
+    # Older artifacts do not carry this lineage and must therefore fail closed
+    # when fixture-level competition applicability is assessed.
+    fitted_competitions: tuple[str, ...] = ()
 
     def fit(self, matches: list[tuple[str, str, int, int]]) -> Self:
         return self._fit(matches, np.ones(len(matches), dtype=float))
@@ -167,6 +171,7 @@ class PoissonModel:
             "maximum_goals": self.maximum_goals,
             "regularization": self.regularization,
             "teams": len(self.fitted_teams),
+            "competitions": len(getattr(self, "fitted_competitions", ())),
             "intercept": self.intercept,
             "home_advantage": self.home_advantage,
         }

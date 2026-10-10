@@ -144,7 +144,9 @@ def summarize_references(
         latest,
         best,
         worst,
-        float(median(probabilities)) if probabilities else None,
+        # Canonical persistence precision prevents harmless parallel floating
+        # aggregation noise from changing an otherwise identical rerun.
+        round(float(median(probabilities)), 12) if probabilities else None,
         best.decimal_odds - worst.decimal_odds if len(latest) > 1 else 0.0,
         len(valid),
         first.decimal_odds,

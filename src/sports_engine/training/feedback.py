@@ -1,3 +1,4 @@
+import json
 import math
 import uuid
 from collections import defaultdict
@@ -12,6 +13,11 @@ import duckdb
 class SettlementResult:
     predictions_settled: int
     probability_rows: int
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowSettlementResult:
+    opportunities_settled: int
 
 
 def settle_completed_predictions(connection: duckdb.DuckDBPyConnection) -> SettlementResult:
@@ -62,6 +68,97 @@ def settle_completed_predictions(connection: duckdb.DuckDBPyConnection) -> Settl
             )
         prediction_ids.add(str(prediction_id))
     return SettlementResult(len(prediction_ids), len(rows))
+
+
+def settle_shadow_opportunities(connection: duckdb.DuckDBPyConnection) -> ShadowSettlementResult:
+    """Settle the governed paper ledger without mutating its entry-time evidence."""
+    rows = connection.execute(
+        "SELECT s.shadow_id, o.canonical_market, o.selection, o.line_key, "
+        "o.latest_reference_odds, o.minimum_acceptable_odds, f.home_goals, f.away_goals, "
+        "CAST(f.fixture_id AS VARCHAR), f.kickoff_utc FROM shadow_opportunities s "
+        "JOIN institutional_opportunities o USING (opportunity_id) "
+        "JOIN institutional_predictions ip USING (prediction_id) "
+        "JOIN fixtures_current f ON f.fixture_id=ip.target_fixture_id "
+        "WHERE s.state='SHADOW_ACTIONABLE' AND f.status_short IN ('FT','AET','PEN') "
+        "AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL "
+        "AND o.latest_reference_odds IS NOT NULL"
+    ).fetchall()
+    settled_at = datetime.now(UTC)
+    for shadow_id, market, selection, line_key, odds, minimum, home, away, fixture_id, kickoff in rows:
+        unit_return, outcome = _realized_shadow_return(
+            str(market),
+            str(selection),
+            str(line_key),
+            float(odds),
+            int(home),
+            int(away),
+        )
+        closing = connection.execute(
+            "SELECT r.decimal_odds FROM market_reference_quotes r "
+            "JOIN institutional_predictions ip ON ip.prediction_id=r.prediction_id "
+            "WHERE CAST(ip.target_fixture_id AS VARCHAR)=? AND r.canonical_market=? "
+            "AND r.selection=? AND r.line_key=? AND r.reference_observed_at<? "
+            "ORDER BY r.reference_observed_at DESC LIMIT 1",
+            [fixture_id, market, selection, line_key, kickoff],
+        ).fetchone()
+        closing_odds = float(closing[0]) if closing and closing[0] is not None else None
+        metrics = {
+            "outcome": outcome,
+            "home_goals": int(home),
+            "away_goals": int(away),
+            "entry_reference_odds": float(odds),
+            "minimum_odds_survived": minimum is not None and float(odds) >= float(minimum),
+            "simulated_unit_return": unit_return,
+            "closing_reference_odds": closing_odds,
+            "closing_odds_movement": closing_odds - float(odds) if closing_odds is not None else None,
+            "settlement_version": "shadow-v1",
+        }
+        connection.execute(
+            "UPDATE shadow_opportunities SET state='SHADOW_SETTLED', outcome_metrics=?, settled_at=? "
+            "WHERE shadow_id=? AND state='SHADOW_ACTIONABLE'",
+            [json.dumps(metrics, sort_keys=True), settled_at, shadow_id],
+        )
+    return ShadowSettlementResult(len(rows))
+
+
+def _realized_shadow_return(
+    market: str,
+    selection: str,
+    line_key: str,
+    decimal_odds: float,
+    home_goals: int,
+    away_goals: int,
+) -> tuple[float, str]:
+    if decimal_odds <= 1:
+        raise ValueError("Shadow settlement requires decimal odds greater than one")
+    if market == "MATCH_ODDS":
+        result = "HOME" if home_goals > away_goals else "DRAW" if home_goals == away_goals else "AWAY"
+        return (decimal_odds - 1 if selection == result else -1.0), result
+    if market == "BTTS":
+        result = "YES" if home_goals > 0 and away_goals > 0 else "NO"
+        return (decimal_odds - 1 if selection == result else -1.0), result
+    if market == "TOTAL_GOALS":
+        line = float(line_key)
+        quarter = round(line * 4)
+        if not math.isclose(line * 4, quarter, abs_tol=1e-9):
+            raise ValueError("Shadow total settlement supports only whole, half, and quarter lines")
+        component_lines = [line] if quarter % 2 == 0 else [(quarter - 1) / 4, (quarter + 1) / 4]
+        total = home_goals + away_goals
+        component_returns: list[float] = []
+        grades: list[str] = []
+        for component in component_lines:
+            margin = total - component if selection == "OVER" else component - total
+            if margin > 1e-12:
+                component_returns.append(decimal_odds - 1)
+                grades.append("WIN")
+            elif margin < -1e-12:
+                component_returns.append(-1.0)
+                grades.append("LOSS")
+            else:
+                component_returns.append(0.0)
+                grades.append("PUSH")
+        return sum(component_returns) / len(component_returns), "/".join(grades)
+    raise ValueError(f"Unsupported shadow settlement market: {market}")
 
 
 def record_drift_signal(

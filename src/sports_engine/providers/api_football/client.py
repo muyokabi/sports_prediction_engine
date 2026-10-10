@@ -126,7 +126,7 @@ class ApiFootballClient:
                     raise self._api_error(endpoint, parameter_dict, envelope.errors, job_run_id)
                 last_error = None
                 break
-            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 last_error = exc
                 retryable = response is None or response.status_code in SAFE_RETRY_STATUSES
                 if not retryable or attempt >= self.retry_count:

@@ -25,7 +25,11 @@ from sports_engine.sports.football.ingestion.reconciliation import FixtureReconc
 from sports_engine.sports.football.ingestion.season_bootstrap import SeasonBootstrapService
 from sports_engine.sports.football.quality.report import quality_details, quality_summary
 from sports_engine.sports.football.quality.soak import CompletenessSoakService
-from sports_engine.training.feedback import refresh_performance_rollups, settle_completed_predictions
+from sports_engine.training.feedback import (
+    refresh_performance_rollups,
+    settle_completed_predictions,
+    settle_shadow_opportunities,
+)
 
 app = typer.Typer(help="Football ingestion and quality workflows.")
 coverage_app = typer.Typer(help="Competition coverage admission gate.")
@@ -199,6 +203,99 @@ def backfill() -> None:
     )
 
 
+@app.command("historical-backfill")
+def historical_backfill(
+    season: int = typer.Option(..., min=2000, max=2100, help="Registered replay season to enrich."),
+    max_requests: int = typer.Option(1000, min=1, max=5000, help="Hard request cap for this run."),
+) -> None:
+    """Enrich a registered replay season without changing the production fixture universe."""
+    config = load_config()
+    connection = open_database(config)
+    registered = connection.execute(
+        "SELECT count(*) FROM competition_seasons WHERE ledger_mode='replay' "
+        "AND provider_season=? AND replay_eligible AND provider_accessible",
+        [season],
+    ).fetchone()
+    if not registered or not registered[0]:
+        connection.close()
+        console.print(f"[red]Replay season {season} is not registered and provider-qualified.[/]")
+        raise typer.Exit(2)
+    summary = JobSummary()
+    try:
+        with (
+            FileLock(config.state_dir / f"historical_backfill_{season}.lock"),
+            job_run(connection, f"football.historical_backfill.{season}", summary, config.mode.value) as run_id,
+        ):
+            with provider_client(config, connection) as client:
+                capabilities = client.get_status(purpose=f"historical_backfill_status:{season}", job_run_id=run_id)
+                plan = BackfillPlanner(
+                    connection,
+                    client.quota_budget,
+                    maximum_requests=max_requests,
+                    repair_attempt_limit=config.backfill.repair_attempt_limit,
+                ).plan(ledger_mode="replay", provider_season=season)
+                result = None
+                if plan.fixture_ids:
+                    capped_client = RequestCappedProvider(client, plan.request_budget)
+                    result = DetailedMatchIngestionService(
+                        connection,
+                        capped_client,
+                        config.data_dir / "quarantine",
+                    ).run(plan.fixture_ids, job_run_id=run_id)
+            summary.fixtures_enriched = result.fixtures_eligible if result else 0
+            summary.fixtures_quarantined = result.fixtures_quarantined if result else 0
+    finally:
+        connection.close()
+    console.print(
+        f"Historical backfill {season}: candidates={plan.candidate_count} request_budget={plan.request_budget} "
+        f"selected={len(plan.fixture_ids)} eligible={result.fixtures_eligible if result else 0} "
+        f"quarantined={result.fixtures_quarantined if result else 0} "
+        f"daily_remaining_at_start={capabilities.daily_remaining}."
+    )
+
+
+@app.command("historical-register")
+def historical_register(
+    season: int = typer.Option(..., min=2000, max=2100, help="Historical season to register and bootstrap."),
+) -> None:
+    """Coverage-qualify and bootstrap one replay season without changing application mode."""
+    config = load_config()
+    connection = open_database(config)
+    summary = JobSummary()
+    try:
+        with (
+            FileLock(config.state_dir / f"historical_register_{season}.lock"),
+            job_run(connection, f"football.historical_register.{season}", summary, config.mode.value) as run_id,
+        ):
+            with provider_client(config, connection) as client:
+                client.get_status(purpose=f"historical_register_status:{season}", job_run_id=run_id)
+                coverage = CoverageAuditService(connection, client).run(
+                    _candidates(),
+                    job_run_id=run_id,
+                    ledger_mode="replay",
+                    replay_season=season,
+                )
+                bootstrap_result = SeasonBootstrapService(connection, client).run(
+                    job_run_id=run_id,
+                    ledger_mode="replay",
+                    provider_season=season,
+                )
+            summary.requests_used = len(coverage.items)
+            summary.fixtures_discovered = bootstrap_result.fixtures_written
+            summary.fixtures_updated = bootstrap_result.fixtures_written
+            if not coverage.complete or not bootstrap_result.complete:
+                summary.warnings.append("historical registration stopped before completion")
+    finally:
+        connection.close()
+    eligible = sum(item.replay_eligible for item in coverage.items)
+    console.print(
+        f"Historical register {season}: coverage_eligible={eligible}/{len(coverage.items)} "
+        f"competition_seasons={bootstrap_result.competition_seasons_completed} "
+        f"teams={bootstrap_result.teams_written} fixtures={bootstrap_result.fixtures_written} "
+        f"complete={coverage.complete and bootstrap_result.complete}."
+    )
+
+
 @app.command("enrich")
 def enrich(limit: int = typer.Option(20, min=1, max=200)) -> None:
     """Fetch batched full-match packages for completed fixtures needing detail."""
@@ -246,9 +343,10 @@ def enrich(limit: int = typer.Option(20, min=1, max=200)) -> None:
 @app.command("daily")
 def daily(
     as_of: str | None = typer.Option(None, help="Operational date (required only to override replay time)."),
-) -> None:
+) -> Any:
     from sports_engine.markets.decision import EvidencePolicy, RiskPolicy
     from sports_engine.sports.football.prediction.service import PredictionService
+    from sports_engine.training.continuous import run_due_ml_updates
 
     config = load_config()
     connection = open_database(config)
@@ -299,7 +397,12 @@ def daily(
                         connection,
                         client,
                         dedupe_seconds=config.odds.snapshot_dedupe_seconds,
-                    ).run(odds_date, job_run_id=run_id)
+                    ).run(
+                        odds_date,
+                        job_run_id=run_id,
+                        ledger_mode=ledger_mode,
+                        timezone=config.timezone,
+                    )
                 injury_result = None
                 injury_ready = connection.execute(
                     "SELECT count(*) FROM fixtures_current f "
@@ -313,7 +416,10 @@ def daily(
                 backfill_plan = BackfillPlanner(
                     connection,
                     client.quota_budget,
-                    maximum_requests=config.backfill.maximum_requests_per_run,
+                    # Prediction runs must remain operationally bounded. The
+                    # dedicated backfill command retains the larger maintenance
+                    # budget; daily runs continuously chip away at the ledger.
+                    maximum_requests=config.backfill.maximum_daily_requests_per_run,
                     repair_attempt_limit=config.backfill.repair_attempt_limit,
                 ).plan(ledger_mode=ledger_mode)
                 backfill_result = None
@@ -332,7 +438,10 @@ def daily(
             )
             summary.odds_snapshots_written = odds_result.snapshots_written if odds_result else 0
             settlement_result = settle_completed_predictions(connection)
+            shadow_settlement_result = settle_shadow_opportunities(connection)
             refresh_performance_rollups(connection)
+            learning = run_due_ml_updates(connection, config, ledger_mode=ledger_mode)
+            summary.warnings.extend(learning.errors)
             if injury_result and injury_result.ignored_unknown_teams:
                 summary.warnings.append(f"{injury_result.ignored_unknown_teams} injury rows ignored for unknown teams")
             champion = connection.execute("SELECT count(*) FROM model_runs WHERE status='champion'").fetchone()
@@ -350,6 +459,7 @@ def daily(
                     windows=config.features.windows,
                     exponential_half_life=config.features.exponential_half_life,
                     prediction_lead_hours=config.features.prediction_lead_hours,
+                    historical_ledger_modes=config.models.historical_training_ledgers,
                     evidence_policy=EvidencePolicy(
                         0,
                         0,
@@ -380,7 +490,11 @@ def daily(
         f"backfill={backfill_result.fixtures_eligible if backfill_result else 0} "
         f"predictions={prediction_result.fixture_count if prediction_result else 0}"
         f" settled_predictions={settlement_result.predictions_settled}"
+        f" settled_shadow={shadow_settlement_result.opportunities_settled}"
+        f" ml_due={len(learning.due_models)} ml_trained={len(learning.trained_versions)}"
+        f" ml_promoted={len(learning.promoted_versions)} ml_withheld={len(learning.withheld_versions)}"
     )
+    return learning
 
 
 @app.command("reconcile")
@@ -606,7 +720,12 @@ def odds_tomorrow(target_date: str | None = typer.Option(None, "--date")) -> Non
                     connection,
                     client,
                     dedupe_seconds=config.odds.snapshot_dedupe_seconds,
-                ).run(requested_date, job_run_id=run_id)
+                ).run(
+                    requested_date,
+                    job_run_id=run_id,
+                    ledger_mode=ledger_mode,
+                    timezone=config.timezone,
+                )
             summary.odds_snapshots_written = result.snapshots_written
     finally:
         connection.close()

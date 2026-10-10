@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Iterator, Mapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -108,6 +109,13 @@ def test_odds_snapshot_preserves_lines_probabilities_and_deduplicates(tmp_path: 
         job_run_id=None,
         observed_at=observed + timedelta(seconds=30),
     )
+    assert not store_odds_snapshot(
+        connection,
+        prices,
+        source_raw_path="odds-later.json.gz",
+        job_run_id=None,
+        observed_at=observed + timedelta(minutes=5),
+    )
     assert connection.execute("SELECT count(*) FROM odds_snapshots").fetchone() == (1,)
     rows = connection.execute(
         "SELECT s.line, p.raw_implied_probability, p.fair_probability, p.overround "
@@ -158,6 +166,40 @@ def test_odds_service_consumes_all_pages_and_skips_unknown_fixtures(tmp_path: Pa
         raw_path_resolver=lambda purpose, run_id: "odds.json.gz",
     ).run(date(2026, 10, 8))
     assert (result.payloads_seen, result.snapshots_written, result.fixtures_not_in_ledger) == (2, 1, 1)
+    connection.close()
+
+
+def test_odds_service_scopes_requests_to_scheduled_admitted_leagues(tmp_path: Path) -> None:
+    connection = _database(tmp_path)
+    season_id = connection.execute("SELECT competition_season_id FROM competition_seasons").fetchone()[0]
+    connection.execute(
+        "INSERT INTO competition_discoveries VALUES "
+        "(?, 'api_football', 39, 2026, ?, 'League', 'England', 'League', 'ACTIONABLE', "
+        "1, 0, 1, '{}', 1, 1, 1, 0, 1, '[]', 1, NULL, ?)",
+        [str(uuid.uuid4()), season_id, datetime.now(UTC)],
+    )
+    requested: list[Mapping[str, Any]] = []
+
+    class Provider:
+        def get_all_pages(
+            self,
+            endpoint: str,
+            parameters: Mapping[str, Any],
+            *,
+            purpose: str,
+            priority: Priority,
+            job_run_id: str | None = None,
+        ) -> Iterator[dict[str, Any]]:
+            requested.append(parameters)
+            yield _odds(100)
+
+    result = OddsIngestionService(
+        connection,
+        Provider(),
+        raw_path_resolver=lambda purpose, run_id: "odds.json.gz",
+    ).run(date(2026, 10, 8), ledger_mode="production", timezone="UTC")
+    assert requested == [{"date": "2026-10-08", "league": 39, "season": 2026}]
+    assert result.snapshots_written == 1
     connection.close()
 
 

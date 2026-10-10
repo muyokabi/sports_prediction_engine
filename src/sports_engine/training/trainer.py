@@ -92,7 +92,9 @@ class ModelTrainer:
             raise ValueError("Warm-start candidates require a parent model version")
         policy = load_evidence_policies()[model_type]
         evidence_features = (
-            [] if model_type in {"elo", "poisson", "dixon-coles"} else self._feature_columns(dataset.frame)
+            []
+            if model_type in {"elo", "poisson", "dixon-coles"}
+            else self._feature_columns(dataset.frame, maximum_missing_fraction=policy.maximum_missing_fraction)
         )
         initial_evidence = assess_model_evidence(
             model_type,
@@ -154,6 +156,19 @@ class ModelTrainer:
         baseline = self._bookmaker_baseline(dataset.frame, fold.test, targets)
         if baseline is not None:
             test_metrics["bookmaker_baseline"] = baseline
+        if model_type in {"poisson", "dixon-coles"}:
+            applicability_policy = self._validated_applicability_policy(
+                dataset.frame,
+                fold,
+                validation_probabilities,
+                validation_targets,
+                probabilities,
+                targets,
+                maximum_log_loss=policy.maximum_log_loss,
+                maximum_brier=policy.maximum_brier,
+            )
+            if applicability_policy is not None:
+                test_metrics["applicability_policy"] = applicability_policy
         evaluation_passed = bool(
             np.isfinite(float(test_metrics["log_loss"]))
             and np.isfinite(float(test_metrics["brier"]))
@@ -171,6 +186,24 @@ class ModelTrainer:
         test_metrics["evidence_state"] = final_evidence.state
         test_metrics["evidence_reasons"] = list(final_evidence.reasons)
         test_metrics["calibration_required"] = policy.calibration_rows > 0
+        evaluation_training_cutoff = max(times[index] for index in fold.train)
+        deployment_training_start = min(times[index] for index in fold.train)
+        deployment_training_end = evaluation_training_cutoff
+        if model_type in {"elo", "poisson", "dixon-coles"}:
+            model, deployment_hyperparameters = self._refit_statistical_for_deployment(
+                model_type,
+                dataset.frame,
+            )
+            hyperparameters = deployment_hyperparameters
+            deployment_training_start = min(times)
+            deployment_training_end = max(times)
+            test_metrics["deployment_refit"] = {
+                "performed": True,
+                "protocol": "evaluate-on-untouched-holdout-then-refit-all-observations",
+                "evaluation_training_cutoff": evaluation_training_cutoff.isoformat(),
+                "deployment_training_cutoff": deployment_training_end.isoformat(),
+                "deployment_rows": dataset.frame.height,
+            }
         created_at = datetime.now(UTC)
         version = self._version(model_type, dataset.dataset_hash, created_at)
         artifact_path = self.artifacts_dir / "models" / version / "model.pkl"
@@ -184,8 +217,8 @@ class ModelTrainer:
             model_type=model_type,
             version=version,
             status="candidate",
-            training_start=min(times[index] for index in fold.train),
-            training_end=max(times[index] for index in fold.train),
+            training_start=deployment_training_start,
+            training_end=deployment_training_end,
             feature_schema_hash=dataset.schema_hash,
             training_dataset_hash=dataset.dataset_hash,
             hyperparameters=hyperparameters,
@@ -216,8 +249,8 @@ class ModelTrainer:
                     final_evidence.state,
                     parent_model_version,
                     training_mode,
-                    max(times[index] for index in fold.train),
-                    len(fold.train),
+                    deployment_training_end,
+                    dataset.frame.height,
                     version,
                 ],
             )
@@ -239,6 +272,104 @@ class ModelTrainer:
             dataset.dataset_id,
             final_evidence.state,
         )
+
+    def _validated_applicability_policy(
+        self,
+        frame: pl.DataFrame,
+        fold: Any,
+        validation_probabilities: np.ndarray,
+        validation_targets: np.ndarray,
+        test_probabilities: np.ndarray,
+        test_targets: np.ndarray,
+        *,
+        maximum_log_loss: float,
+        maximum_brier: float,
+    ) -> dict[str, Any] | None:
+        """Validate the configured history floor on validation, then confirm on test."""
+        # Five recency-weighted matches is the predeclared shadow/applicability
+        # floor. It is selected on validation and must independently pass the
+        # untouched test period below; it is not tuned on realized ROI.
+        threshold = 5.0
+        validation_history = self._effective_team_history(frame, fold.train, fold.validation)
+        test_history = self._effective_team_history(frame, fold.train, fold.test)
+        validation_mask = validation_history >= threshold
+        test_mask = test_history >= threshold
+        if validation_mask.sum() < 100 or test_mask.sum() < 100:
+            return None
+        validation_metrics = probability_metrics(
+            validation_targets[validation_mask], validation_probabilities[validation_mask]
+        )
+        test_metrics = probability_metrics(test_targets[test_mask], test_probabilities[test_mask])
+        validated = all(
+            (
+                float(validation_metrics["log_loss"]) <= maximum_log_loss,
+                float(validation_metrics["brier"]) <= maximum_brier,
+                float(test_metrics["log_loss"]) <= maximum_log_loss,
+                float(test_metrics["brier"]) <= maximum_brier,
+                bool(validation_metrics["probability_integrity"]["passed"]),
+                bool(test_metrics["probability_integrity"]["passed"]),
+            )
+        )
+        return {
+            "validated": validated,
+            "version": "effective-history-5-v1",
+            "minimum_effective_matches": threshold,
+            "selection_protocol": (
+                "predeclared threshold; validation selection; untouched chronological test confirmation"
+            ),
+            "validation_rows": int(validation_mask.sum()),
+            "test_rows": int(test_mask.sum()),
+            "validation": {
+                key: validation_metrics[key] for key in ("log_loss", "brier", "rps", "expected_calibration_error")
+            },
+            "test": {key: test_metrics[key] for key in ("log_loss", "brier", "rps", "expected_calibration_error")},
+        }
+
+    def _effective_team_history(self, frame: pl.DataFrame, train: Any, targets: Any) -> np.ndarray:
+        home = frame["home_team_id"].cast(pl.String).to_list()
+        away = frame["away_team_id"].cast(pl.String).to_list()
+        times = frame["prediction_timestamp"].to_list()
+        result: list[float] = []
+        decay = np.log(2.0) / self.time_decay_half_life_days
+        for target in targets:
+            target_time = times[int(target)]
+            values = []
+            for team in (home[int(target)], away[int(target)]):
+                effective = sum(
+                    np.exp(-decay * max(0.0, (target_time - times[int(index)]).total_seconds() / 86_400))
+                    for index in train
+                    if team in {home[int(index)], away[int(index)]}
+                )
+                values.append(float(effective))
+            result.append(min(values))
+        return np.asarray(result)
+
+    def _refit_statistical_for_deployment(self, model_type: str, frame: pl.DataFrame) -> tuple[Any, dict[str, Any]]:
+        """Refit the deployable artifact after evaluation has consumed its holdout."""
+        matches = self._matches(frame)
+        if model_type == "elo":
+            model: Any = EloModel()
+            model.fit(matches)
+        else:
+            model = DixonColesModel() if model_type == "dixon-coles" else PoissonModel()
+            timestamps = frame["prediction_timestamp"].to_list()
+            model.fit_timed(
+                [(*match, timestamp) for match, timestamp in zip(matches, timestamps, strict=True)],
+                half_life_days=self.time_decay_half_life_days,
+            )
+            fixture_ids = [str(value) for value in frame["fixture_id"].to_list()]
+            placeholders = ",".join("?" for _ in fixture_ids)
+            competition_rows = self.connection.execute(
+                "SELECT DISTINCT CAST(competition_season_id AS VARCHAR) FROM fixtures_current "
+                f"WHERE CAST(fixture_id AS VARCHAR) IN ({placeholders}) ORDER BY 1",
+                fixture_ids,
+            ).fetchall()
+            model.fitted_competitions = tuple(str(row[0]) for row in competition_rows)
+        metadata = model.metadata()
+        if model_type in {"poisson", "dixon-coles"}:
+            metadata["time_decay_half_life_days"] = self.time_decay_half_life_days
+        metadata["deployment_refit_rows"] = frame.height
+        return model, metadata
 
     def _fit(
         self,
@@ -265,6 +396,15 @@ class ModelTrainer:
                 timestamps = frame["prediction_timestamp"].to_list()
                 timed_matches = [(*matches[index], timestamps[index]) for index in fold.train]
                 model.fit_timed(timed_matches, half_life_days=self.time_decay_half_life_days)
+                fixture_ids = frame["fixture_id"].to_list()
+                training_fixture_ids = [str(fixture_ids[int(index)]) for index in fold.train]
+                placeholders = ",".join("?" for _ in training_fixture_ids)
+                competition_rows = self.connection.execute(
+                    "SELECT DISTINCT CAST(competition_season_id AS VARCHAR) FROM fixtures_current "
+                    f"WHERE CAST(fixture_id AS VARCHAR) IN ({placeholders}) ORDER BY 1",
+                    training_fixture_ids,
+                ).fetchall()
+                model.fitted_competitions = tuple(str(row[0]) for row in competition_rows)
             else:
                 model.fit(train_matches)
             validation_fixtures = [(matches[index][0], matches[index][1]) for index in fold.validation]
@@ -278,7 +418,8 @@ class ModelTrainer:
                 metadata,
                 [],
             )
-        feature_columns = self._feature_columns(frame)
+        maximum_missing = load_evidence_policies()[model_type].maximum_missing_fraction
+        feature_columns = self._feature_columns(frame, maximum_missing_fraction=maximum_missing)
         matrix = frame.select(feature_columns).cast(pl.Float64).to_numpy()
         targets = self._targets(frame)
         if parent_model is not None:
@@ -411,12 +552,22 @@ class ModelTrainer:
             raise ValueError(f"Unknown target result {exc.args[0]!r}") from exc
 
     @staticmethod
-    def _feature_columns(frame: pl.DataFrame) -> list[str]:
-        columns = [
-            name
-            for name, dtype in frame.schema.items()
-            if name not in NON_FEATURE_COLUMNS and (dtype.is_numeric() or dtype == pl.Boolean)
-        ]
+    def _feature_columns(frame: pl.DataFrame, *, maximum_missing_fraction: float = 1.0) -> list[str]:
+        columns = []
+        for name, dtype in frame.schema.items():
+            if name in NON_FEATURE_COLUMNS or not (dtype.is_numeric() or dtype == pl.Boolean):
+                continue
+            series = frame[name]
+            if series.null_count() / max(1, frame.height) > maximum_missing_fraction:
+                continue
+            observed = series.drop_nulls()
+            if observed.n_unique() <= 1:
+                continue
+            counts = observed.value_counts().get_column("count").to_numpy()
+            dominant_fraction = float(np.max(counts)) / max(1, len(observed))
+            if dominant_fraction >= 0.995:
+                continue
+            columns.append(name)
         if not columns:
             raise ValueError("Feature dataset contains no numeric model features")
         return columns

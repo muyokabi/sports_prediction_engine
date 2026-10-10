@@ -28,7 +28,9 @@ class CanonicalMarket:
 # These IDs and names are observed API-Football taxonomy, not inferred aliases.
 API_FOOTBALL_MARKETS: dict[int, CanonicalMarket] = {
     1: CanonicalMarket(1, "Match Winner", "MATCH_ODDS", "SCORE", MarketState.SUPPORTED, "score-v1"),
-    2: CanonicalMarket(2, "Home/Away", "HOME_AWAY", "SCORE", MarketState.SUPPORTED, "score-v1"),
+    # Provider documentation does not unambiguously define draw settlement for
+    # this two-way market. Keep it disabled until observed settlement is proven.
+    2: CanonicalMarket(2, "Home/Away", "HOME_AWAY", "SCORE", MarketState.UNSUPPORTED_SETTLEMENT, None),
     4: CanonicalMarket(4, "Asian Handicap", "ASIAN_HANDICAP", "SCORE", MarketState.SUPPORTED, "asian-v1"),
     5: CanonicalMarket(5, "Goals Over/Under", "TOTAL_GOALS", "SCORE", MarketState.SUPPORTED, "asian-v1"),
     8: CanonicalMarket(8, "Both Teams Score", "BTTS", "SCORE", MarketState.SUPPORTED, "score-v1"),

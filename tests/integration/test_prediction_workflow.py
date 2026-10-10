@@ -118,6 +118,14 @@ def test_champion_prediction_is_point_in_time_and_append_only(tmp_path: Path) ->
     assert first.prediction_run_id != second.prediction_run_id
     assert connection.execute("SELECT count(*) FROM prediction_runs").fetchone() == (2,)
     assert connection.execute("SELECT count(*), min(state) FROM prediction_decisions").fetchone() == (2, "NO_BET")
+    assert connection.execute("SELECT count(*), min(applicability_state) FROM prediction_decisions").fetchone() == (
+        2,
+        "OUT_OF_DOMAIN",
+    )
+    assert connection.execute(
+        "SELECT bool_and(CAST(applicability_reason_codes AS VARCHAR) LIKE '%TRAINING_LINEAGE_UNAVAILABLE%') "
+        "FROM prediction_decisions"
+    ).fetchone() == (True,)
     assert connection.execute(
         "SELECT count(*) FROM predictions WHERE CAST(fixture_id AS VARCHAR)=?", [fixture_id]
     ).fetchone() == (2,)

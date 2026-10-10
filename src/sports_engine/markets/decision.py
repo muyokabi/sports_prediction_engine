@@ -24,6 +24,11 @@ class NoBetReason(StrEnum):
     EXCESSIVE_UNCERTAINTY = "EXCESSIVE_UNCERTAINTY"
     DAILY_EXPOSURE_LIMIT = "DAILY_EXPOSURE_LIMIT"
     SIMULTANEOUS_RECOMMENDATION_LIMIT = "SIMULTANEOUS_RECOMMENDATION_LIMIT"
+    MODEL_NOT_APPLICABLE_TO_FIXTURE = "MODEL_NOT_APPLICABLE_TO_FIXTURE"
+    COMPETITION_NOT_ACTIONABLE = "COMPETITION_NOT_ACTIONABLE"
+    MARKET_FAMILY_NOT_QUALIFIED = "MARKET_FAMILY_NOT_QUALIFIED"
+    UNCERTAINTY_NOT_VALIDATED = "UNCERTAINTY_NOT_VALIDATED"
+    MARGIN_THRESHOLD_NOT_VALIDATED = "MARGIN_THRESHOLD_NOT_VALIDATED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,12 +95,27 @@ def decide_wager(
     risk: RiskPolicy,
     current_daily_exposure: float = 0.0,
     active_recommendations: int = 0,
+    fixture_applicable: bool,
+    competition_actionable: bool,
+    market_family_qualified: bool,
+    uncertainty_validated: bool,
+    margin_threshold_validated: bool,
 ) -> BettingDecision:
     def count(name: str) -> int:
         value = model_metrics.get(name, 0)
         return int(value) if isinstance(value, (int, float, str)) else 0
 
     reasons: list[str] = []
+    if not fixture_applicable:
+        reasons.append(NoBetReason.MODEL_NOT_APPLICABLE_TO_FIXTURE)
+    if not competition_actionable:
+        reasons.append(NoBetReason.COMPETITION_NOT_ACTIONABLE)
+    if not market_family_qualified:
+        reasons.append(NoBetReason.MARKET_FAMILY_NOT_QUALIFIED)
+    if not uncertainty_validated:
+        reasons.append(NoBetReason.UNCERTAINTY_NOT_VALIDATED)
+    if not margin_threshold_validated:
+        reasons.append(NoBetReason.MARGIN_THRESHOLD_NOT_VALIDATED)
     if fixture_kickoff is not None and decision_time >= fixture_kickoff:
         return BettingDecision(
             "NO_BET",

@@ -64,6 +64,24 @@ def test_safe_server_error_is_retried(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_remote_protocol_disconnect_is_retried(tmp_path: Path) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.RemoteProtocolError("server disconnected")
+        return httpx.Response(200, json=envelope())
+
+    client, connection = make_client(tmp_path, httpx.MockTransport(handler))
+    assert client.get("/fixtures", {}, purpose="transport_retry", priority=Priority.P1) == []
+    assert calls == 2
+    assert connection.execute("SELECT http_status FROM api_request_log").fetchone() == (200,)
+    client.close()
+    connection.close()
+
+
 def test_api_level_errors_are_logged_and_raised(tmp_path: Path) -> None:
     client, connection = make_client(
         tmp_path,

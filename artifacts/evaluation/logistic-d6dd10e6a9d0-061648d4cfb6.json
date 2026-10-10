@@ -1,0 +1,2051 @@
+{
+  "aggregate_metrics": {
+    "accuracy": 0.4117647058823529,
+    "balanced_accuracy": 0.4021098247066308,
+    "brier": 0.678234275331758,
+    "calibration_curves": {
+      "away": [
+        {
+          "count": 85,
+          "mean_predicted": 0.07080130137753593,
+          "observed_frequency": 0.11764705882352941
+        },
+        {
+          "count": 311,
+          "mean_predicted": 0.155764123979111,
+          "observed_frequency": 0.2315112540192926
+        },
+        {
+          "count": 448,
+          "mean_predicted": 0.2490150225446061,
+          "observed_frequency": 0.2857142857142857
+        },
+        {
+          "count": 474,
+          "mean_predicted": 0.34049156514663326,
+          "observed_frequency": 0.3206751054852321
+        },
+        {
+          "count": 257,
+          "mean_predicted": 0.4451127900718251,
+          "observed_frequency": 0.3735408560311284
+        },
+        {
+          "count": 173,
+          "mean_predicted": 0.5465643247515357,
+          "observed_frequency": 0.42196531791907516
+        },
+        {
+          "count": 106,
+          "mean_predicted": 0.6459093041103616,
+          "observed_frequency": 0.4339622641509434
+        },
+        {
+          "count": 67,
+          "mean_predicted": 0.7482286072566878,
+          "observed_frequency": 0.5522388059701493
+        },
+        {
+          "count": 28,
+          "mean_predicted": 0.8390054062882973,
+          "observed_frequency": 0.35714285714285715
+        },
+        {
+          "count": 6,
+          "mean_predicted": 0.9239453235837748,
+          "observed_frequency": 0.6666666666666666
+        }
+      ],
+      "draw": [
+        {
+          "count": 63,
+          "mean_predicted": 0.07505149835408273,
+          "observed_frequency": 0.23809523809523808
+        },
+        {
+          "count": 227,
+          "mean_predicted": 0.1582128037315123,
+          "observed_frequency": 0.2599118942731278
+        },
+        {
+          "count": 504,
+          "mean_predicted": 0.25212457395952653,
+          "observed_frequency": 0.22023809523809523
+        },
+        {
+          "count": 678,
+          "mean_predicted": 0.3402608757409189,
+          "observed_frequency": 0.2581120943952802
+        },
+        {
+          "count": 307,
+          "mean_predicted": 0.4435245707255526,
+          "observed_frequency": 0.254071661237785
+        },
+        {
+          "count": 128,
+          "mean_predicted": 0.5403760925200914,
+          "observed_frequency": 0.3359375
+        },
+        {
+          "count": 40,
+          "mean_predicted": 0.6466306050851622,
+          "observed_frequency": 0.35
+        },
+        {
+          "count": 6,
+          "mean_predicted": 0.7299449280170228,
+          "observed_frequency": 0.16666666666666666
+        },
+        {
+          "count": 2,
+          "mean_predicted": 0.8246042578789629,
+          "observed_frequency": 0.0
+        }
+      ],
+      "home": [
+        {
+          "count": 139,
+          "mean_predicted": 0.06920943450748951,
+          "observed_frequency": 0.2517985611510791
+        },
+        {
+          "count": 331,
+          "mean_predicted": 0.15474025586424608,
+          "observed_frequency": 0.3685800604229607
+        },
+        {
+          "count": 448,
+          "mean_predicted": 0.25077949868226057,
+          "observed_frequency": 0.34375
+        },
+        {
+          "count": 470,
+          "mean_predicted": 0.35278035770986527,
+          "observed_frequency": 0.46170212765957447
+        },
+        {
+          "count": 283,
+          "mean_predicted": 0.4426059945364115,
+          "observed_frequency": 0.4734982332155477
+        },
+        {
+          "count": 169,
+          "mean_predicted": 0.5438178208519918,
+          "observed_frequency": 0.591715976331361
+        },
+        {
+          "count": 77,
+          "mean_predicted": 0.6475930304615336,
+          "observed_frequency": 0.5454545454545454
+        },
+        {
+          "count": 27,
+          "mean_predicted": 0.7412180481070707,
+          "observed_frequency": 0.6666666666666666
+        },
+        {
+          "count": 11,
+          "mean_predicted": 0.8485908835425704,
+          "observed_frequency": 0.8181818181818182
+        }
+      ]
+    },
+    "confusion_matrix": [
+      [
+        363,
+        224,
+        244
+      ],
+      [
+        168,
+        155,
+        173
+      ],
+      [
+        179,
+        162,
+        287
+      ]
+    ],
+    "expected_calibration_error": 0.09273542019327977,
+    "folds": 4,
+    "log_loss": 1.128112184063275,
+    "metric_uncertainty": {
+      "brier": {
+        "estimate": 0.678234275331758,
+        "lower": 0.6653233532385701,
+        "method": "chronological-block-bootstrap(block_size=44)",
+        "samples": 2000,
+        "upper": 0.6929700474145016
+      },
+      "log_loss": {
+        "estimate": 1.128112184063275,
+        "lower": 1.1075778857754914,
+        "method": "chronological-block-bootstrap(block_size=44)",
+        "samples": 2000,
+        "upper": 1.1517387216187016
+      },
+      "rps": {
+        "estimate": 0.23620771486146036,
+        "lower": 0.23035930361695786,
+        "method": "chronological-block-bootstrap(block_size=44)",
+        "samples": 2000,
+        "upper": 0.24289358518053975
+      }
+    },
+    "probability_forensics": {
+      "competition_metrics_minimum_30_rows": {
+        "2. Bundesliga": {
+          "brier": 0.6226284804823099,
+          "expected_calibration_error": 0.06588562118593483,
+          "log_loss": 1.0525980673194222,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6226284804823099,
+              "lower": 0.5370520780348562,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.7217849522201668
+            },
+            "log_loss": {
+              "estimate": 1.0525980673194222,
+              "lower": 0.9201216002156634,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.2178836986227575
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 2,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.7228361028084517,
+            "mean_entropy": 1.0194131908975845,
+            "minimum_entropy": 0.6694302913531028,
+            "minimum_probability": 0.0229616265695534,
+            "passed": true,
+            "reasons": [],
+            "rows": 40,
+            "unique_vector_fraction": 0.975,
+            "unique_vectors_at_6dp": 39
+          },
+          "rows": 40,
+          "rps": 0.20735251504569616
+        },
+        "Allsvenskan": {
+          "brier": 0.7415214280291241,
+          "expected_calibration_error": 0.19432288950380383,
+          "log_loss": 1.2523840482162834,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7415214280291241,
+              "lower": 0.6529243311862021,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.856488870568305
+            },
+            "log_loss": {
+              "estimate": 1.2523840482162834,
+              "lower": 1.091585106861285,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.465578783715421
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8596222250367107,
+            "mean_entropy": 0.9366337520469756,
+            "minimum_entropy": 0.49569390093874355,
+            "minimum_probability": 0.024969120803319776,
+            "passed": true,
+            "reasons": [],
+            "rows": 55,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 55
+          },
+          "rows": 55,
+          "rps": 0.27561835557820746
+        },
+        "Bundesliga": {
+          "brier": 0.6295624096459658,
+          "expected_calibration_error": 0.06418638924229364,
+          "log_loss": 1.0433156230392604,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6295624096459658,
+              "lower": 0.5365687745536489,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 0.7296121250552472
+            },
+            "log_loss": {
+              "estimate": 1.0433156230392604,
+              "lower": 0.9109618671984786,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 1.191966361774262
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 5,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8403020968947762,
+            "mean_entropy": 0.9888593338067037,
+            "minimum_entropy": 0.548947184870043,
+            "minimum_probability": 0.05611901185687329,
+            "passed": true,
+            "reasons": [],
+            "rows": 64,
+            "unique_vector_fraction": 0.9375,
+            "unique_vectors_at_6dp": 60
+          },
+          "rows": 64,
+          "rps": 0.22891130559577033
+        },
+        "Championship": {
+          "brier": 0.7294809628002982,
+          "expected_calibration_error": 0.17960454930320463,
+          "log_loss": 1.1953802258733839,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7294809628002982,
+              "lower": 0.6834191468790553,
+              "method": "chronological-block-bootstrap(block_size=9)",
+              "samples": 1000,
+              "upper": 0.7916971091144056
+            },
+            "log_loss": {
+              "estimate": 1.1953802258733839,
+              "lower": 1.1187734048300604,
+              "method": "chronological-block-bootstrap(block_size=9)",
+              "samples": 1000,
+              "upper": 1.2973197404178725
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 7,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6816555363100876,
+            "mean_entropy": 1.0367626809873196,
+            "minimum_entropy": 0.8284051989138645,
+            "minimum_probability": 0.09129104788863106,
+            "passed": true,
+            "reasons": [],
+            "rows": 83,
+            "unique_vector_fraction": 0.927710843373494,
+            "unique_vectors_at_6dp": 77
+          },
+          "rows": 83,
+          "rps": 0.24321587094669744
+        },
+        "Czech Liga": {
+          "brier": 0.6416086631940988,
+          "expected_calibration_error": 0.06342315901224346,
+          "log_loss": 1.0585180497912754,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6416086631940988,
+              "lower": 0.6004174576945508,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.6941181278614631
+            },
+            "log_loss": {
+              "estimate": 1.0585180497912754,
+              "lower": 0.9994453578339001,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.1400887101644024
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 4,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.5961059305823089,
+            "mean_entropy": 1.0466604850741172,
+            "minimum_entropy": 0.9317629519000948,
+            "minimum_probability": 0.11627325568781176,
+            "passed": true,
+            "reasons": [],
+            "rows": 38,
+            "unique_vector_fraction": 0.9210526315789473,
+            "unique_vectors_at_6dp": 35
+          },
+          "rows": 38,
+          "rps": 0.2320888406557293
+        },
+        "Division Profesional - Clausura": {
+          "brier": 0.6643904211844743,
+          "expected_calibration_error": 0.1019859209296754,
+          "log_loss": 1.0892531059863815,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6643904211844743,
+              "lower": 0.6116762634647163,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.714300481923426
+            },
+            "log_loss": {
+              "estimate": 1.0892531059863815,
+              "lower": 1.0120445709406318,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.1615793128404208
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 4,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6176563609120783,
+            "mean_entropy": 1.058381371432471,
+            "minimum_entropy": 0.9074071511428596,
+            "minimum_probability": 0.09574719548096115,
+            "passed": true,
+            "reasons": [],
+            "rows": 49,
+            "unique_vector_fraction": 0.9387755102040817,
+            "unique_vectors_at_6dp": 46
+          },
+          "rows": 49,
+          "rps": 0.22887001679503993
+        },
+        "Eerste Divisie": {
+          "brier": 0.750268337447722,
+          "expected_calibration_error": 0.1679529399315212,
+          "log_loss": 1.2372345438860397,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.750268337447722,
+              "lower": 0.6984779276032863,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.8001162895678294
+            },
+            "log_loss": {
+              "estimate": 1.2372345438860397,
+              "lower": 1.1499304726713944,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.324779625318536
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6886305279978663,
+            "mean_entropy": 1.0340099280687465,
+            "minimum_entropy": 0.8277381266180008,
+            "minimum_probability": 0.07669412421136236,
+            "passed": true,
+            "reasons": [],
+            "rows": 54,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 54
+          },
+          "rows": 54,
+          "rps": 0.27817064975128786
+        },
+        "Ekstraklasa": {
+          "brier": 0.6271733101184198,
+          "expected_calibration_error": 0.08276404403436653,
+          "log_loss": 1.0411855451457612,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6271733101184198,
+              "lower": 0.595717767740457,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 0.674036619702152
+            },
+            "log_loss": {
+              "estimate": 1.0411855451457612,
+              "lower": 0.9938571450743111,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 1.1101474390283563
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 7,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6421771715101134,
+            "mean_entropy": 1.0581927532245947,
+            "minimum_entropy": 0.8964434093985392,
+            "minimum_probability": 0.1165600308055244,
+            "passed": true,
+            "reasons": [],
+            "rows": 65,
+            "unique_vector_fraction": 0.9076923076923077,
+            "unique_vectors_at_6dp": 59
+          },
+          "rows": 65,
+          "rps": 0.20981703273259286
+        },
+        "Eliteserien": {
+          "brier": 0.6460803948956638,
+          "expected_calibration_error": 0.18313471984555227,
+          "log_loss": 1.0823650205609383,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6460803948956638,
+              "lower": 0.573423156890047,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.7321740448947602
+            },
+            "log_loss": {
+              "estimate": 1.0823650205609383,
+              "lower": 0.9738641750011631,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.213235503865018
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8244727875579978,
+            "mean_entropy": 0.9537246166536774,
+            "minimum_entropy": 0.5849391356203233,
+            "minimum_probability": 0.04505756491129038,
+            "passed": true,
+            "reasons": [],
+            "rows": 55,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 55
+          },
+          "rows": 55,
+          "rps": 0.22574919823265618
+        },
+        "Eredivisie": {
+          "brier": 0.5907019765095033,
+          "expected_calibration_error": 0.13262568112435155,
+          "log_loss": 1.0010859321240884,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.5907019765095033,
+              "lower": 0.4830820912193779,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.681725022443196
+            },
+            "log_loss": {
+              "estimate": 1.0010859321240884,
+              "lower": 0.829913718457819,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.146372836061327
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8618691201679552,
+            "mean_entropy": 0.9468323889392801,
+            "minimum_entropy": 0.4960307507471309,
+            "minimum_probability": 0.05763873121543304,
+            "passed": true,
+            "reasons": [],
+            "rows": 49,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 49
+          },
+          "rows": 49,
+          "rps": 0.19208614512989128
+        },
+        "HNL": {
+          "brier": 0.5894702972900787,
+          "expected_calibration_error": 0.1573612757965942,
+          "log_loss": 0.9803166402808229,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.5894702972900787,
+              "lower": 0.5456059406748559,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.6321318736090931
+            },
+            "log_loss": {
+              "estimate": 0.9803166402808229,
+              "lower": 0.9049023058428721,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.0477230720008075
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 5,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.7658913583718872,
+            "mean_entropy": 1.0210537313901495,
+            "minimum_entropy": 0.6804022194068183,
+            "minimum_probability": 0.06287164210464137,
+            "passed": true,
+            "reasons": [],
+            "rows": 36,
+            "unique_vector_fraction": 0.8888888888888888,
+            "unique_vectors_at_6dp": 32
+          },
+          "rows": 36,
+          "rps": 0.20322715267476707
+        },
+        "J1 League": {
+          "brier": 0.647043073066735,
+          "expected_calibration_error": 0.067149631081125,
+          "log_loss": 1.0827929881374672,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.647043073066735,
+              "lower": 0.6013387569802021,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.7134842648232079
+            },
+            "log_loss": {
+              "estimate": 1.0827929881374672,
+              "lower": 1.0115174072641806,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.1912465992205492
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 8,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6356307853585531,
+            "mean_entropy": 1.0420781459494974,
+            "minimum_entropy": 0.8969229553088818,
+            "minimum_probability": 0.10095035694600019,
+            "passed": true,
+            "reasons": [],
+            "rows": 54,
+            "unique_vector_fraction": 0.8703703703703703,
+            "unique_vectors_at_6dp": 47
+          },
+          "rows": 54,
+          "rps": 0.23495162879627343
+        },
+        "Jupiler Pro League": {
+          "brier": 0.6255127362025621,
+          "expected_calibration_error": 0.12193020534358523,
+          "log_loss": 1.0437534141202578,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6255127362025621,
+              "lower": 0.5116481143933932,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.7024983197511964
+            },
+            "log_loss": {
+              "estimate": 1.0437534141202578,
+              "lower": 0.8743485898768194,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.147601927430178
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.7703875390579434,
+            "mean_entropy": 0.9743816589923935,
+            "minimum_entropy": 0.6949446075490548,
+            "minimum_probability": 0.07681781631653556,
+            "passed": true,
+            "reasons": [],
+            "rows": 44,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 44
+          },
+          "rows": 44,
+          "rps": 0.2194579192527562
+        },
+        "La Liga": {
+          "brier": 0.6461860422997339,
+          "expected_calibration_error": 0.08347333477127411,
+          "log_loss": 1.133240547940565,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6461860422997339,
+              "lower": 0.5036387219730808,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 0.725599081604106
+            },
+            "log_loss": {
+              "estimate": 1.133240547940565,
+              "lower": 0.8941998239866005,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 1.2959157710206737
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.9367504556362903,
+            "mean_entropy": 0.8865756062786845,
+            "minimum_entropy": 0.2749478748052252,
+            "minimum_probability": 0.019574107034765784,
+            "passed": true,
+            "reasons": [],
+            "rows": 64,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 64
+          },
+          "rows": 64,
+          "rps": 0.23177221870420714
+        },
+        "League One": {
+          "brier": 0.7110415312448405,
+          "expected_calibration_error": 0.12661506499992228,
+          "log_loss": 1.1806561871453651,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7110415312448405,
+              "lower": 0.6687657606123965,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.7332587749331805
+            },
+            "log_loss": {
+              "estimate": 1.1806561871453651,
+              "lower": 1.108312844059801,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.2202532149112455
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 8,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6332049188065533,
+            "mean_entropy": 1.0496032585757298,
+            "minimum_entropy": 0.9037150015447961,
+            "minimum_probability": 0.09908687815095749,
+            "passed": true,
+            "reasons": [],
+            "rows": 57,
+            "unique_vector_fraction": 0.8771929824561403,
+            "unique_vectors_at_6dp": 50
+          },
+          "rows": 57,
+          "rps": 0.24377966723456987
+        },
+        "League Two": {
+          "brier": 0.6442182174628956,
+          "expected_calibration_error": 0.10896173472364677,
+          "log_loss": 1.070206245409345,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6442182174628956,
+              "lower": 0.5893752719303887,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.6801167088599547
+            },
+            "log_loss": {
+              "estimate": 1.070206245409345,
+              "lower": 0.9859791283823914,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.1357056652842945
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 8,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6679581129899982,
+            "mean_entropy": 1.027686998893734,
+            "minimum_entropy": 0.8623580346946909,
+            "minimum_probability": 0.08055397108014611,
+            "passed": true,
+            "reasons": [],
+            "rows": 52,
+            "unique_vector_fraction": 0.8653846153846154,
+            "unique_vectors_at_6dp": 45
+          },
+          "rows": 52,
+          "rps": 0.21165603335374497
+        },
+        "Liga I": {
+          "brier": 0.6182171145607439,
+          "expected_calibration_error": 0.06531745889754598,
+          "log_loss": 1.0359885244212936,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6182171145607439,
+              "lower": 0.5245348284733178,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.7214821981961478
+            },
+            "log_loss": {
+              "estimate": 1.0359885244212936,
+              "lower": 0.9016570486265942,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.1920848460048754
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 5,
+            "maximum_normalization_error": 1.1102230246251565e-16,
+            "maximum_probability": 0.7339762731494577,
+            "mean_entropy": 1.0415313871854723,
+            "minimum_entropy": 0.7636413688280878,
+            "minimum_probability": 0.12913854032044744,
+            "passed": true,
+            "reasons": [],
+            "rows": 38,
+            "unique_vector_fraction": 0.8947368421052632,
+            "unique_vectors_at_6dp": 34
+          },
+          "rows": 38,
+          "rps": 0.21601909084557516
+        },
+        "Liga MX": {
+          "brier": 0.6154252705279466,
+          "expected_calibration_error": 0.10685005709513658,
+          "log_loss": 1.0407349396578152,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6154252705279466,
+              "lower": 0.5502740117755174,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.6819815107311205
+            },
+            "log_loss": {
+              "estimate": 1.0407349396578152,
+              "lower": 0.9390071795074073,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.1559356716660245
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 6,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.808794031956463,
+            "mean_entropy": 0.9889453985983463,
+            "minimum_entropy": 0.574037531252393,
+            "minimum_probability": 0.03181837189585697,
+            "passed": true,
+            "reasons": [],
+            "rows": 39,
+            "unique_vector_fraction": 0.8717948717948718,
+            "unique_vectors_at_6dp": 34
+          },
+          "rows": 39,
+          "rps": 0.24375685576276224
+        },
+        "Liga Profesional Argentina": {
+          "brier": 0.7670815194547693,
+          "expected_calibration_error": 0.23336159089601946,
+          "log_loss": 1.260940777681577,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7670815194547693,
+              "lower": 0.6675752291574645,
+              "method": "chronological-block-bootstrap(block_size=10)",
+              "samples": 1000,
+              "upper": 0.8608130445939843
+            },
+            "log_loss": {
+              "estimate": 1.260940777681577,
+              "lower": 1.1048971920732884,
+              "method": "chronological-block-bootstrap(block_size=10)",
+              "samples": 1000,
+              "upper": 1.4039401730531194
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8687230683713504,
+            "mean_entropy": 0.9434014036001365,
+            "minimum_entropy": 0.4760654575247599,
+            "minimum_probability": 0.03639482281274536,
+            "passed": true,
+            "reasons": [],
+            "rows": 109,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 109
+          },
+          "rows": 109,
+          "rps": 0.26644081369934103
+        },
+        "Ligue 1": {
+          "brier": 0.6990286919224896,
+          "expected_calibration_error": 0.10705112356889551,
+          "log_loss": 1.1347086396231802,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6990286919224896,
+              "lower": 0.6057172006760294,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.7839168211833617
+            },
+            "log_loss": {
+              "estimate": 1.1347086396231802,
+              "lower": 0.9802697036109213,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.2560221891875363
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8078113396563781,
+            "mean_entropy": 0.9909224945510234,
+            "minimum_entropy": 0.5760733350001528,
+            "minimum_probability": 0.026568943568728152,
+            "passed": true,
+            "reasons": [],
+            "rows": 43,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 43
+          },
+          "rows": 43,
+          "rps": 0.23476190033637984
+        },
+        "Major League Soccer": {
+          "brier": 0.7551657232327064,
+          "expected_calibration_error": 0.19071975595083948,
+          "log_loss": 1.2515556572477962,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7551657232327064,
+              "lower": 0.7089975399684598,
+              "method": "chronological-block-bootstrap(block_size=12)",
+              "samples": 1000,
+              "upper": 0.8085693475434307
+            },
+            "log_loss": {
+              "estimate": 1.2515556572477962,
+              "lower": 1.160637587654976,
+              "method": "chronological-block-bootstrap(block_size=12)",
+              "samples": 1000,
+              "upper": 1.355967324882631
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.9376498907688818,
+            "mean_entropy": 0.9515529241979122,
+            "minimum_entropy": 0.27543719223755064,
+            "minimum_probability": 0.014078927879916558,
+            "passed": true,
+            "reasons": [],
+            "rows": 146,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 146
+          },
+          "rows": 146,
+          "rps": 0.2611633304499559
+        },
+        "Premier League": {
+          "brier": 0.6512726970929629,
+          "expected_calibration_error": 0.09862459656824585,
+          "log_loss": 1.0910357118139957,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6512726970929629,
+              "lower": 0.5945900756732406,
+              "method": "chronological-block-bootstrap(block_size=9)",
+              "samples": 1000,
+              "upper": 0.7060528054649539
+            },
+            "log_loss": {
+              "estimate": 1.0910357118139957,
+              "lower": 0.9896036147535662,
+              "method": "chronological-block-bootstrap(block_size=9)",
+              "samples": 1000,
+              "upper": 1.196451959828827
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 7,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8866262138618703,
+            "mean_entropy": 0.9817319122965885,
+            "minimum_entropy": 0.3968197576065912,
+            "minimum_probability": 0.014478124923795691,
+            "passed": true,
+            "reasons": [],
+            "rows": 99,
+            "unique_vector_fraction": 0.9393939393939394,
+            "unique_vectors_at_6dp": 93
+          },
+          "rows": 99,
+          "rps": 0.21782234382226334
+        },
+        "Premiership": {
+          "brier": 0.6143347066699708,
+          "expected_calibration_error": 0.1570041366067608,
+          "log_loss": 1.0316608444852804,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6143347066699708,
+              "lower": 0.418806013698572,
+              "method": "chronological-block-bootstrap(block_size=5)",
+              "samples": 1000,
+              "upper": 0.7516509485183775
+            },
+            "log_loss": {
+              "estimate": 1.0316608444852804,
+              "lower": 0.7376189846044163,
+              "method": "chronological-block-bootstrap(block_size=5)",
+              "samples": 1000,
+              "upper": 1.2573890860759067
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8981384349219041,
+            "mean_entropy": 0.9013607779473268,
+            "minimum_entropy": 0.38214220001138866,
+            "minimum_probability": 0.02033239404702717,
+            "passed": true,
+            "reasons": [],
+            "rows": 35,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 35
+          },
+          "rows": 35,
+          "rps": 0.22085618963123566
+        },
+        "Primeira Liga": {
+          "brier": 0.6227797844895766,
+          "expected_calibration_error": 0.11440805447454953,
+          "log_loss": 1.0846408280519235,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6227797844895766,
+              "lower": 0.4860375890749184,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 0.6910919440933251
+            },
+            "log_loss": {
+              "estimate": 1.0846408280519235,
+              "lower": 0.8286749520454421,
+              "method": "chronological-block-bootstrap(block_size=6)",
+              "samples": 1000,
+              "upper": 1.2198263375700258
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.9191655001278783,
+            "mean_entropy": 0.8756738873224001,
+            "minimum_entropy": 0.3047885705373311,
+            "minimum_probability": 0.007073422693653607,
+            "passed": true,
+            "reasons": [],
+            "rows": 40,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 40
+          },
+          "rows": 40,
+          "rps": 0.21324750678090681
+        },
+        "Primera A": {
+          "brier": 0.7461167571335682,
+          "expected_calibration_error": 0.20162879204806008,
+          "log_loss": 1.2424482385563846,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7461167571335682,
+              "lower": 0.672875481697213,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.8019979255765929
+            },
+            "log_loss": {
+              "estimate": 1.2424482385563846,
+              "lower": 1.1500957858382175,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.336839202260037
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.9397025003553501,
+            "mean_entropy": 0.9188944293424511,
+            "minimum_entropy": 0.26747233168016693,
+            "minimum_probability": 0.02222345407035151,
+            "passed": true,
+            "reasons": [],
+            "rows": 54,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 54
+          },
+          "rows": 54,
+          "rps": 0.2621648187727092
+        },
+        "Primera Divisi\u00f3n": {
+          "brier": 0.669833649517858,
+          "expected_calibration_error": 0.08389281968147495,
+          "log_loss": 1.1153105036305129,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.669833649517858,
+              "lower": 0.6125287540593163,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 0.7435007278693505
+            },
+            "log_loss": {
+              "estimate": 1.1153105036305129,
+              "lower": 1.0188465117279744,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 1.25245980447451
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8200169545430942,
+            "mean_entropy": 1.0169675472138522,
+            "minimum_entropy": 0.5892431555628976,
+            "minimum_probability": 0.0490218109277843,
+            "passed": true,
+            "reasons": [],
+            "rows": 67,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 67
+          },
+          "rows": 67,
+          "rps": 0.2574257346101721
+        },
+        "Segunda Divisi\u00f3n": {
+          "brier": 0.7099461485075736,
+          "expected_calibration_error": 0.1475340386073754,
+          "log_loss": 1.1660074730193553,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.7099461485075736,
+              "lower": 0.6710312407194088,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 0.7673043613272098
+            },
+            "log_loss": {
+              "estimate": 1.1660074730193553,
+              "lower": 1.1053421249509827,
+              "method": "chronological-block-bootstrap(block_size=8)",
+              "samples": 1000,
+              "upper": 1.2547361534240702
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 5,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.6989973589518849,
+            "mean_entropy": 1.030054980642277,
+            "minimum_entropy": 0.8010320756324175,
+            "minimum_probability": 0.09597706509379779,
+            "passed": true,
+            "reasons": [],
+            "rows": 72,
+            "unique_vector_fraction": 0.9444444444444444,
+            "unique_vectors_at_6dp": 68
+          },
+          "rows": 72,
+          "rps": 0.2501174276532057
+        },
+        "Serie A": {
+          "brier": 0.6660606982799436,
+          "expected_calibration_error": 0.1404733236651499,
+          "log_loss": 1.0999967344498394,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6660606982799436,
+              "lower": 0.5967425330655752,
+              "method": "chronological-block-bootstrap(block_size=11)",
+              "samples": 1000,
+              "upper": 0.7417975467566476
+            },
+            "log_loss": {
+              "estimate": 1.0999967344498394,
+              "lower": 0.990929973217443,
+              "method": "chronological-block-bootstrap(block_size=11)",
+              "samples": 1000,
+              "upper": 1.2180923400448078
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.842881424016555,
+            "mean_entropy": 0.9559402764658351,
+            "minimum_entropy": 0.5220860278503795,
+            "minimum_probability": 0.03826872714053855,
+            "passed": true,
+            "reasons": [],
+            "rows": 130,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 130
+          },
+          "rows": 130,
+          "rps": 0.22488093966698605
+        },
+        "S\u00fcper Lig": {
+          "brier": 0.6081911824052861,
+          "expected_calibration_error": 0.15937971009373894,
+          "log_loss": 1.0251078824323252,
+          "metric_uncertainty": {
+            "brier": {
+              "estimate": 0.6081911824052861,
+              "lower": 0.5483310462110615,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 0.6479336175767475
+            },
+            "log_loss": {
+              "estimate": 1.0251078824323252,
+              "lower": 0.9337213668057891,
+              "method": "chronological-block-bootstrap(block_size=7)",
+              "samples": 1000,
+              "upper": 1.0927782097333636
+            }
+          },
+          "probability_integrity": {
+            "largest_duplicate_cluster": 1,
+            "maximum_normalization_error": 2.220446049250313e-16,
+            "maximum_probability": 0.8530281422017505,
+            "mean_entropy": 0.9711834344518061,
+            "minimum_entropy": 0.5191834245857752,
+            "minimum_probability": 0.027508380276580927,
+            "passed": true,
+            "reasons": [],
+            "rows": 52,
+            "unique_vector_fraction": 1.0,
+            "unique_vectors_at_6dp": 52
+          },
+          "rows": 52,
+          "rps": 0.22543020150525667
+        }
+      },
+      "confidence_bands": [
+        {
+          "accuracy": 0.36363636363636365,
+          "calibration_gap": -0.011229390290652841,
+          "lower": 0.3,
+          "mean_confidence": 0.3748657539270165,
+          "rows": 363,
+          "upper": 0.4
+        },
+        {
+          "accuracy": 0.3670212765957447,
+          "calibration_gap": -0.0795915148452736,
+          "lower": 0.4,
+          "mean_confidence": 0.4466127914410183,
+          "rows": 752,
+          "upper": 0.5
+        },
+        {
+          "accuracy": 0.4595744680851064,
+          "calibration_gap": -0.0843169781884553,
+          "lower": 0.5,
+          "mean_confidence": 0.5438914462735617,
+          "rows": 470,
+          "upper": 0.6
+        },
+        {
+          "accuracy": 0.45739910313901344,
+          "calibration_gap": -0.1892209586755288,
+          "lower": 0.6,
+          "mean_confidence": 0.6466200618145422,
+          "rows": 223,
+          "upper": 0.7
+        },
+        {
+          "accuracy": 0.56,
+          "calibration_gap": -0.18523873553191128,
+          "lower": 0.7,
+          "mean_confidence": 0.7452387355319113,
+          "rows": 100,
+          "upper": 0.8
+        },
+        {
+          "accuracy": 0.4634146341463415,
+          "calibration_gap": -0.377459990507281,
+          "lower": 0.8,
+          "mean_confidence": 0.8408746246536225,
+          "rows": 41,
+          "upper": 0.9
+        },
+        {
+          "accuracy": 0.6666666666666666,
+          "calibration_gap": -0.25727865691710816,
+          "lower": 0.9,
+          "mean_confidence": 0.9239453235837748,
+          "rows": 6,
+          "upper": 1.0
+        }
+      ],
+      "passed": false,
+      "reasons": [
+        "MATERIAL_CONFIDENCE_BAND_MISCALIBRATION"
+      ]
+    },
+    "probability_integrity": {
+      "largest_duplicate_cluster": 56,
+      "maximum_normalization_error": 2.220446049250313e-16,
+      "maximum_probability": 0.9397025003553501,
+      "mean_entropy": 0.9872510089050881,
+      "minimum_entropy": 0.26747233168016693,
+      "minimum_probability": 0.007073422693653607,
+      "passed": true,
+      "reasons": [],
+      "rows": 1955,
+      "unique_vector_fraction": 0.9514066496163683,
+      "unique_vectors_at_6dp": 1860
+    },
+    "rps": 0.23620771486146036,
+    "test_rows": 1955
+  },
+  "created_at": "2026-10-10T15:38:42.486940+00:00",
+  "dataset_hash": "d6dd10e6a9d063823b266fe1449d2d6ca7e21f134b10dfa59cb94738284a7a44",
+  "dataset_id": "ec1845fd-60fa-514a-9c65-1df35db2031d",
+  "fold_metrics": [
+    {
+      "accuracy": 0.372972972972973,
+      "balanced_accuracy": 0.347488495566816,
+      "brier": 0.7178690789170533,
+      "calibration_curves": {
+        "away": [
+          {
+            "count": 15,
+            "mean_predicted": 0.07725425692799771,
+            "observed_frequency": 0.2
+          },
+          {
+            "count": 46,
+            "mean_predicted": 0.15744808068561064,
+            "observed_frequency": 0.21739130434782608
+          },
+          {
+            "count": 79,
+            "mean_predicted": 0.24909375369114606,
+            "observed_frequency": 0.3037974683544304
+          },
+          {
+            "count": 124,
+            "mean_predicted": 0.32890465755494397,
+            "observed_frequency": 0.33064516129032256
+          },
+          {
+            "count": 35,
+            "mean_predicted": 0.4508540076258986,
+            "observed_frequency": 0.3142857142857143
+          },
+          {
+            "count": 40,
+            "mean_predicted": 0.5459531040716895,
+            "observed_frequency": 0.425
+          },
+          {
+            "count": 11,
+            "mean_predicted": 0.6451588280650188,
+            "observed_frequency": 0.5454545454545454
+          },
+          {
+            "count": 13,
+            "mean_predicted": 0.7526260826987273,
+            "observed_frequency": 0.23076923076923078
+          },
+          {
+            "count": 7,
+            "mean_predicted": 0.8364706896239616,
+            "observed_frequency": 0.42857142857142855
+          }
+        ],
+        "draw": [
+          {
+            "count": 24,
+            "mean_predicted": 0.07264171524993837,
+            "observed_frequency": 0.375
+          },
+          {
+            "count": 51,
+            "mean_predicted": 0.15465758678399022,
+            "observed_frequency": 0.27450980392156865
+          },
+          {
+            "count": 87,
+            "mean_predicted": 0.2523795666086503,
+            "observed_frequency": 0.25287356321839083
+          },
+          {
+            "count": 137,
+            "mean_predicted": 0.3331856146174968,
+            "observed_frequency": 0.20437956204379562
+          },
+          {
+            "count": 46,
+            "mean_predicted": 0.4360464888427723,
+            "observed_frequency": 0.13043478260869565
+          },
+          {
+            "count": 15,
+            "mean_predicted": 0.5365651749303406,
+            "observed_frequency": 0.4
+          },
+          {
+            "count": 7,
+            "mean_predicted": 0.6392982710342691,
+            "observed_frequency": 0.14285714285714285
+          },
+          {
+            "count": 2,
+            "mean_predicted": 0.7150691503545485,
+            "observed_frequency": 0.0
+          },
+          {
+            "count": 1,
+            "mean_predicted": 0.8063270917413707,
+            "observed_frequency": 0.0
+          }
+        ],
+        "home": [
+          {
+            "count": 25,
+            "mean_predicted": 0.07027029367747138,
+            "observed_frequency": 0.4
+          },
+          {
+            "count": 51,
+            "mean_predicted": 0.1582036703993131,
+            "observed_frequency": 0.37254901960784315
+          },
+          {
+            "count": 63,
+            "mean_predicted": 0.25406113908548944,
+            "observed_frequency": 0.4444444444444444
+          },
+          {
+            "count": 126,
+            "mean_predicted": 0.3582734064865111,
+            "observed_frequency": 0.5079365079365079
+          },
+          {
+            "count": 38,
+            "mean_predicted": 0.44457917750130677,
+            "observed_frequency": 0.3157894736842105
+          },
+          {
+            "count": 39,
+            "mean_predicted": 0.5411197280471617,
+            "observed_frequency": 0.48717948717948717
+          },
+          {
+            "count": 14,
+            "mean_predicted": 0.6493880164667168,
+            "observed_frequency": 0.42857142857142855
+          },
+          {
+            "count": 11,
+            "mean_predicted": 0.7374195516122704,
+            "observed_frequency": 0.5454545454545454
+          },
+          {
+            "count": 3,
+            "mean_predicted": 0.8516883253657678,
+            "observed_frequency": 0.6666666666666666
+          }
+        ]
+      },
+      "confusion_matrix": [
+        [
+          75,
+          43,
+          48
+        ],
+        [
+          44,
+          18,
+          24
+        ],
+        [
+          54,
+          19,
+          45
+        ]
+      ],
+      "expected_calibration_error": 0.15701917148765349,
+      "log_loss": 1.1921761486431584,
+      "probability_integrity": {
+        "largest_duplicate_cluster": 56,
+        "maximum_normalization_error": 2.220446049250313e-16,
+        "maximum_probability": 0.8751388765086792,
+        "mean_entropy": 0.9878967477019996,
+        "minimum_entropy": 0.4204809571251541,
+        "minimum_probability": 0.014078927879916558,
+        "passed": true,
+        "reasons": [],
+        "rows": 370,
+        "unique_vector_fraction": 0.8513513513513513,
+        "unique_vectors_at_6dp": 315
+      },
+      "rps": 0.2543948204197355
+    },
+    {
+      "accuracy": 0.4503968253968254,
+      "balanced_accuracy": 0.4439746159851679,
+      "brier": 0.661804462922668,
+      "calibration_curves": {
+        "away": [
+          {
+            "count": 18,
+            "mean_predicted": 0.05755681374940648,
+            "observed_frequency": 0.2222222222222222
+          },
+          {
+            "count": 74,
+            "mean_predicted": 0.15440268879291844,
+            "observed_frequency": 0.1891891891891892
+          },
+          {
+            "count": 99,
+            "mean_predicted": 0.25602326107517526,
+            "observed_frequency": 0.2727272727272727
+          },
+          {
+            "count": 133,
+            "mean_predicted": 0.342115754228421,
+            "observed_frequency": 0.2932330827067669
+          },
+          {
+            "count": 72,
+            "mean_predicted": 0.44490310595635396,
+            "observed_frequency": 0.375
+          },
+          {
+            "count": 48,
+            "mean_predicted": 0.5476002540933581,
+            "observed_frequency": 0.3541666666666667
+          },
+          {
+            "count": 36,
+            "mean_predicted": 0.6414622187173189,
+            "observed_frequency": 0.4166666666666667
+          },
+          {
+            "count": 13,
+            "mean_predicted": 0.742804826858737,
+            "observed_frequency": 0.6923076923076923
+          },
+          {
+            "count": 9,
+            "mean_predicted": 0.8377820776959414,
+            "observed_frequency": 0.4444444444444444
+          },
+          {
+            "count": 2,
+            "mean_predicted": 0.9386761955621159,
+            "observed_frequency": 0.5
+          }
+        ],
+        "draw": [
+          {
+            "count": 9,
+            "mean_predicted": 0.0685042058537268,
+            "observed_frequency": 0.1111111111111111
+          },
+          {
+            "count": 56,
+            "mean_predicted": 0.16199136980058018,
+            "observed_frequency": 0.32142857142857145
+          },
+          {
+            "count": 134,
+            "mean_predicted": 0.25057266922320576,
+            "observed_frequency": 0.12686567164179105
+          },
+          {
+            "count": 200,
+            "mean_predicted": 0.3353127465152771,
+            "observed_frequency": 0.275
+          },
+          {
+            "count": 64,
+            "mean_predicted": 0.4452285546734185,
+            "observed_frequency": 0.359375
+          },
+          {
+            "count": 27,
+            "mean_predicted": 0.542429087934432,
+            "observed_frequency": 0.4074074074074074
+          },
+          {
+            "count": 13,
+            "mean_predicted": 0.6508839280317323,
+            "observed_frequency": 0.5384615384615384
+          },
+          {
+            "count": 1,
+            "mean_predicted": 0.7397784037901448,
+            "observed_frequency": 1.0
+          }
+        ],
+        "home": [
+          {
+            "count": 50,
+            "mean_predicted": 0.06477180837108983,
+            "observed_frequency": 0.2
+          },
+          {
+            "count": 85,
+            "mean_predicted": 0.15711222346713127,
+            "observed_frequency": 0.38823529411764707
+          },
+          {
+            "count": 107,
+            "mean_predicted": 0.24924034181951896,
+            "observed_frequency": 0.3644859813084112
+          },
+          {
+            "count": 133,
+            "mean_predicted": 0.35429139850641045,
+            "observed_frequency": 0.42857142857142855
+          },
+          {
+            "count": 72,
+            "mean_predicted": 0.44351790442795314,
+            "observed_frequency": 0.4861111111111111
+          },
+          {
+            "count": 32,
+            "mean_predicted": 0.5540220147128389,
+            "observed_frequency": 0.78125
+          },
+          {
+            "count": 14,
+            "mean_predicted": 0.6376455127530101,
+            "observed_frequency": 0.5
+          },
+          {
+            "count": 7,
+            "mean_predicted": 0.7435751875371321,
+            "observed_frequency": 0.7142857142857143
+          },
+          {
+            "count": 4,
+            "mean_predicted": 0.8401669330148772,
+            "observed_frequency": 0.75
+          }
+        ]
+      },
+      "confusion_matrix": [
+        [
+          99,
+          40,
+          75
+        ],
+        [
+          38,
+          47,
+          48
+        ],
+        [
+          43,
+          33,
+          81
+        ]
+      ],
+      "expected_calibration_error": 0.05489668428447029,
+      "log_loss": 1.1102882879838594,
+      "probability_integrity": {
+        "largest_duplicate_cluster": 37,
+        "maximum_normalization_error": 2.220446049250313e-16,
+        "maximum_probability": 0.9397025003553501,
+        "mean_entropy": 0.987282641931047,
+        "minimum_entropy": 0.26747233168016693,
+        "minimum_probability": 0.011899363342096727,
+        "passed": true,
+        "reasons": [],
+        "rows": 504,
+        "unique_vector_fraction": 0.9285714285714286,
+        "unique_vectors_at_6dp": 468
+      },
+      "rps": 0.23343466514816877
+    },
+    {
+      "accuracy": 0.4273356401384083,
+      "balanced_accuracy": 0.4183507914077862,
+      "brier": 0.6664723420764133,
+      "calibration_curves": {
+        "away": [
+          {
+            "count": 28,
+            "mean_predicted": 0.0683574442195932,
+            "observed_frequency": 0.07142857142857142
+          },
+          {
+            "count": 95,
+            "mean_predicted": 0.15995521933501874,
+            "observed_frequency": 0.21052631578947367
+          },
+          {
+            "count": 161,
+            "mean_predicted": 0.2476009676757844,
+            "observed_frequency": 0.2732919254658385
+          },
+          {
+            "count": 103,
+            "mean_predicted": 0.3455569967093295,
+            "observed_frequency": 0.3786407766990291
+          },
+          {
+            "count": 76,
+            "mean_predicted": 0.4470210668344966,
+            "observed_frequency": 0.3815789473684211
+          },
+          {
+            "count": 50,
+            "mean_predicted": 0.542359180602588,
+            "observed_frequency": 0.52
+          },
+          {
+            "count": 36,
+            "mean_predicted": 0.6501099794778605,
+            "observed_frequency": 0.5
+          },
+          {
+            "count": 24,
+            "mean_predicted": 0.7474322972527974,
+            "observed_frequency": 0.5416666666666666
+          },
+          {
+            "count": 5,
+            "mean_predicted": 0.8398895583726127,
+            "observed_frequency": 0.4
+          }
+        ],
+        "draw": [
+          {
+            "count": 16,
+            "mean_predicted": 0.08493793497896471,
+            "observed_frequency": 0.1875
+          },
+          {
+            "count": 76,
+            "mean_predicted": 0.16045959486224018,
+            "observed_frequency": 0.2236842105263158
+          },
+          {
+            "count": 148,
+            "mean_predicted": 0.2514828466934056,
+            "observed_frequency": 0.25
+          },
+          {
+            "count": 177,
+            "mean_predicted": 0.34807510471417596,
+            "observed_frequency": 0.2937853107344633
+          },
+          {
+            "count": 100,
+            "mean_predicted": 0.44483674945475615,
+            "observed_frequency": 0.27
+          },
+          {
+            "count": 47,
+            "mean_predicted": 0.543714417222033,
+            "observed_frequency": 0.3191489361702128
+          },
+          {
+            "count": 11,
+            "mean_predicted": 0.6407198422848764,
+            "observed_frequency": 0.2727272727272727
+          },
+          {
+            "count": 2,
+            "mean_predicted": 0.7392066432291392,
+            "observed_frequency": 0.0
+          },
+          {
+            "count": 1,
+            "mean_predicted": 0.842881424016555,
+            "observed_frequency": 0.0
+          }
+        ],
+        "home": [
+          {
+            "count": 39,
+            "mean_predicted": 0.07412088582179006,
+            "observed_frequency": 0.23076923076923078
+          },
+          {
+            "count": 107,
+            "mean_predicted": 0.15148044612077716,
+            "observed_frequency": 0.38317757009345793
+          },
+          {
+            "count": 144,
+            "mean_predicted": 0.24676814945549827,
+            "observed_frequency": 0.2569444444444444
+          },
+          {
+            "count": 102,
+            "mean_predicted": 0.34766793626269227,
+            "observed_frequency": 0.4215686274509804
+          },
+          {
+            "count": 99,
+            "mean_predicted": 0.44652373054260774,
+            "observed_frequency": 0.5050505050505051
+          },
+          {
+            "count": 48,
+            "mean_predicted": 0.5383231118697366,
+            "observed_frequency": 0.6041666666666666
+          },
+          {
+            "count": 28,
+            "mean_predicted": 0.6506827522648562,
+            "observed_frequency": 0.4642857142857143
+          },
+          {
+            "count": 7,
+            "mean_predicted": 0.7473589080970358,
+            "observed_frequency": 0.7142857142857143
+          },
+          {
+            "count": 4,
+            "mean_predicted": 0.8546917527028655,
+            "observed_frequency": 1.0
+          }
+        ]
+      },
+      "confusion_matrix": [
+        [
+          106,
+          72,
+          53
+        ],
+        [
+          47,
+          50,
+          57
+        ],
+        [
+          48,
+          54,
+          91
+        ]
+      ],
+      "expected_calibration_error": 0.08581612087858492,
+      "log_loss": 1.1086352372889121,
+      "probability_integrity": {
+        "largest_duplicate_cluster": 4,
+        "maximum_normalization_error": 2.220446049250313e-16,
+        "maximum_probability": 0.8866262138618703,
+        "mean_entropy": 0.9827524497381851,
+        "minimum_entropy": 0.3968197576065912,
+        "minimum_probability": 0.014478124923795691,
+        "passed": true,
+        "reasons": [],
+        "rows": 578,
+        "unique_vector_fraction": 0.9948096885813149,
+        "unique_vectors_at_6dp": 575
+      },
+      "rps": 0.22689531531902896
+    },
+    {
+      "accuracy": 0.3836978131212724,
+      "balanced_accuracy": 0.3799919931017492,
+      "brier": 0.6790576263242255,
+      "calibration_curves": {
+        "away": [
+          {
+            "count": 24,
+            "mean_predicted": 0.079552736563861,
+            "observed_frequency": 0.041666666666666664
+          },
+          {
+            "count": 96,
+            "mean_predicted": 0.1518592295673196,
+            "observed_frequency": 0.2916666666666667
+          },
+          {
+            "count": 109,
+            "mean_predicted": 0.24468132950586574,
+            "observed_frequency": 0.30275229357798167
+          },
+          {
+            "count": 114,
+            "mean_predicted": 0.34662331902851024,
+            "observed_frequency": 0.2894736842105263
+          },
+          {
+            "count": 74,
+            "mean_predicted": 0.4406415145036941,
+            "observed_frequency": 0.3918918918918919
+          },
+          {
+            "count": 35,
+            "mean_predicted": 0.5518495083582149,
+            "observed_frequency": 0.37142857142857144
+          },
+          {
+            "count": 23,
+            "mean_predicted": 0.6466539126937682,
+            "observed_frequency": 0.30434782608695654
+          },
+          {
+            "count": 17,
+            "mean_predicted": 0.7501376310519944,
+            "observed_frequency": 0.7058823529411765
+          },
+          {
+            "count": 7,
+            "mean_predicted": 0.8424814367968654,
+            "observed_frequency": 0.14285714285714285
+          },
+          {
+            "count": 4,
+            "mean_predicted": 0.9165798875946043,
+            "observed_frequency": 0.75
+          }
+        ],
+        "draw": [
+          {
+            "count": 14,
+            "mean_predicted": 0.07209274414012252,
+            "observed_frequency": 0.14285714285714285
+          },
+          {
+            "count": 44,
+            "mean_predicted": 0.15364371824334191,
+            "observed_frequency": 0.22727272727272727
+          },
+          {
+            "count": 135,
+            "mean_predicted": 0.25420417773418674,
+            "observed_frequency": 0.25925925925925924
+          },
+          {
+            "count": 164,
+            "mean_predicted": 0.34377196166025237,
+            "observed_frequency": 0.24390243902439024
+          },
+          {
+            "count": 97,
+            "mean_predicted": 0.44459383795260543,
+            "observed_frequency": 0.2268041237113402
+          },
+          {
+            "count": 39,
+            "mean_predicted": 0.5363974162808045,
+            "observed_frequency": 0.28205128205128205
+          },
+          {
+            "count": 9,
+            "mean_predicted": 0.6534141085133831,
+            "observed_frequency": 0.3333333333333333
+          },
+          {
+            "count": 1,
+            "mean_predicted": 0.7313395771446171,
+            "observed_frequency": 0.0
+          }
+        ],
+        "home": [
+          {
+            "count": 25,
+            "mean_predicted": 0.06936196355999809,
+            "observed_frequency": 0.24
+          },
+          {
+            "count": 88,
+            "mean_predicted": 0.1544055769439906,
+            "observed_frequency": 0.32954545454545453
+          },
+          {
+            "count": 134,
+            "mean_predicted": 0.2547763697834824,
+            "observed_frequency": 0.373134328358209
+          },
+          {
+            "count": 109,
+            "mean_predicted": 0.34937094868063395,
+            "observed_frequency": 0.48623853211009177
+          },
+          {
+            "count": 74,
+            "mean_predicted": 0.4354641792732972,
+            "observed_frequency": 0.5
+          },
+          {
+            "count": 50,
+            "mean_predicted": 0.5446665697917823,
+            "observed_frequency": 0.54
+          },
+          {
+            "count": 21,
+            "mean_predicted": 0.6489084225259969,
+            "observed_frequency": 0.7619047619047619
+          },
+          {
+            "count": 2,
+            "mean_predicted": 0.7323667808583816,
+            "observed_frequency": 1.0
+          }
+        ]
+      },
+      "confusion_matrix": [
+        [
+          83,
+          69,
+          68
+        ],
+        [
+          39,
+          40,
+          44
+        ],
+        [
+          34,
+          56,
+          70
+        ]
+      ],
+      "expected_calibration_error": 0.11609675713121018,
+      "log_loss": 1.121227993138922,
+      "probability_integrity": {
+        "largest_duplicate_cluster": 2,
+        "maximum_normalization_error": 2.220446049250313e-16,
+        "maximum_probability": 0.9367504556362903,
+        "mean_entropy": 0.991913634747095,
+        "minimum_entropy": 0.2749478748052252,
+        "minimum_probability": 0.007073422693653607,
+        "passed": true,
+        "reasons": [],
+        "rows": 503,
+        "unique_vector_fraction": 0.9980119284294234,
+        "unique_vectors_at_6dp": 502
+      },
+      "rps": 0.23630901691804593
+    }
+  ],
+  "minimum_train_periods": 1425,
+  "model_type": "logistic",
+  "rolling_train_periods": null,
+  "test_periods": 237
+}

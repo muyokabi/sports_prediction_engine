@@ -6,7 +6,7 @@ from sports_engine.warehouse.migrations import migrate, pending_migrations
 
 def test_all_migrations_apply_and_are_idempotent(tmp_path: Path) -> None:
     connection = connect(tmp_path / "test.duckdb")
-    assert migrate(connection) == list(range(1, 27))
+    assert migrate(connection) == list(range(1, 34))
     assert migrate(connection) == []
     assert pending_migrations(connection) == []
     tables = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
@@ -32,5 +32,7 @@ def test_all_migrations_apply_and_are_idempotent(tmp_path: Path) -> None:
         "market_reference_quotes",
         "institutional_opportunities",
         "odds_age_research_results",
+        "model_promotion_assessments",
+        "model_probability_scope_validations",
     } <= tables
     connection.close()
