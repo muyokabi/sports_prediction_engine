@@ -65,7 +65,11 @@ def assess_model_update(
     included = int(row[1] or 0) if row else 0
     new_count = max(0, eligible_observations - included)
     triggers: list[UpdateTrigger] = []
-    if row is None or new_count >= policy.minimum_new_observations:
+    # A missing model means that an initial fit is needed only after at least
+    # one eligible observation exists.  Treating an empty, freshly migrated
+    # warehouse as NEW_OBSERVATIONS makes the daily workflow try to build an
+    # impossible empty feature dataset.
+    if (row is None and eligible_observations > 0) or new_count >= policy.minimum_new_observations:
         triggers.append(UpdateTrigger.NEW_OBSERVATIONS)
     if row and observed - row[2] >= policy.maximum_age:
         triggers.append(UpdateTrigger.ELAPSED_TIME)

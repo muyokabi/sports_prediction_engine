@@ -3,8 +3,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from sports_engine.models.registry import ModelRegistry, ModelRun
-from sports_engine.training.continuous import _train_due_candidate
+from sports_engine.training.continuous import _train_due_candidate, run_due_ml_updates
 from sports_engine.training.scheduler import UpdateDecision, UpdateTrigger, assess_model_update
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
@@ -42,6 +44,7 @@ def test_retraining_trigger_uses_model_specific_new_observation_policy(tmp_path:
     stored = connection.execute(
         "SELECT due, reason_codes FROM model_update_events WHERE current_version=?", [run.version]
     ).fetchone()
+    assert stored is not None
     assert stored[0] is True
     assert "NEW_OBSERVATIONS" in json.loads(stored[1])
     connection.close()
@@ -53,6 +56,28 @@ def test_drift_can_trigger_review_before_batch_threshold(tmp_path: Path) -> None
     decision = assess_model_update(connection, "catboost", eligible_observations=10, drift=True)
     assert decision.due
     assert UpdateTrigger.DRIFT in decision.triggers
+    connection.close()
+
+
+def test_empty_warehouse_does_not_schedule_initial_training(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "empty-scheduler.duckdb")
+    migrate(connection)
+    decision = assess_model_update(connection, "poisson", eligible_observations=0)
+    assert not decision.due
+    assert decision.triggers == ()
+    connection.close()
+
+
+def test_due_ml_updates_accepts_empty_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = connect(tmp_path / "empty-learning.duckdb")
+    migrate(connection)
+    promotion = SimpleNamespace(promoted_versions=(), withheld_versions=())
+    monkeypatch.setattr("sports_engine.training.continuous.run_automated_promotion", lambda *args, **kwargs: promotion)
+    config = SimpleNamespace(models=SimpleNamespace(historical_training_ledgers=["replay"]))
+    result = run_due_ml_updates(connection, config, ledger_mode="production")  # type: ignore[arg-type]
+    assert result.eligible_observations == 0
+    assert result.due_models == ()
+    assert result.trained_versions == ()
     connection.close()
 
 

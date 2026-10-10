@@ -53,6 +53,20 @@ def run_due_ml_updates(
         list(training_modes),
     ).fetchone()
     eligible = int(count_row[0]) if count_row else 0
+    if eligible == 0:
+        # Empty history is normal immediately after installation.  There is
+        # no dataset to build or candidate to train yet, and the principal
+        # analysis command must remain usable while backfill accumulates it.
+        promotion = run_automated_promotion(connection, config, now=observed)
+        return ContinuousLearningResult(
+            0,
+            (),
+            (),
+            (),
+            promotion.promoted_versions,
+            promotion.withheld_versions,
+            (),
+        )
     decisions = tuple(
         assess_model_update(connection, model_type, eligible_observations=eligible, now=observed)
         for model_type in CONTINUOUS_MODEL_TYPES

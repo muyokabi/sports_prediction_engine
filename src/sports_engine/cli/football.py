@@ -296,6 +296,124 @@ def historical_register(
     )
 
 
+@app.command("fetch-backfill")
+def fetch_backfill(
+    season: int | None = typer.Option(
+        None,
+        "--season",
+        min=2000,
+        max=2100,
+        help="Historical season to fetch into the replay ledger; omit for the configured current ledger.",
+    ),
+    max_requests: int = typer.Option(
+        1000,
+        "--max-requests",
+        min=1,
+        max=5000,
+        help="Hard cap for detailed backfill requests; coverage and fixture fetching are not included.",
+    ),
+    coverage_enabled: bool = typer.Option(
+        True,
+        "--coverage/--no-coverage",
+        help="Run the provider coverage/admission check before fetching fixtures.",
+    ),
+    bootstrap_enabled: bool = typer.Option(
+        True,
+        "--bootstrap/--no-bootstrap",
+        help="Fetch teams and season fixture skeletons before detailed backfill.",
+    ),
+) -> None:
+    """Fetch a current or historical season and enrich its completed fixtures."""
+    config = load_config()
+    ledger_mode, configured_replay_season = _ledger_target(config)
+    provider_season = None
+    if season is not None:
+        ledger_mode = "replay"
+        provider_season = season
+    elif ledger_mode == "replay":
+        provider_season = configured_replay_season
+
+    connection = open_database(config)
+    summary = JobSummary()
+    coverage_result = None
+    bootstrap_result = None
+    backfill_result = None
+    label = str(provider_season) if provider_season is not None else "current"
+    try:
+        with (
+            FileLock(config.state_dir / f"fetch_backfill_{ledger_mode}_{label}.lock"),
+            job_run(connection, f"football.fetch_backfill.{ledger_mode}.{label}", summary, config.mode.value) as run_id,
+        ):
+            with provider_client(config, connection) as client:
+                capabilities = client.get_status(purpose=f"fetch_backfill_status:{label}", job_run_id=run_id)
+                if coverage_enabled:
+                    coverage_result = CoverageAuditService(connection, client).run(
+                        _candidates(),
+                        job_run_id=run_id,
+                        ledger_mode=ledger_mode,
+                        replay_season=provider_season if ledger_mode == "replay" else None,
+                    )
+                if bootstrap_enabled:
+                    bootstrap_result = SeasonBootstrapService(connection, client).run(
+                        job_run_id=run_id,
+                        ledger_mode=ledger_mode,
+                        provider_season=provider_season,
+                    )
+                plan = BackfillPlanner(
+                    connection,
+                    client.quota_budget,
+                    maximum_requests=max_requests,
+                    repair_attempt_limit=config.backfill.repair_attempt_limit,
+                ).plan(ledger_mode=ledger_mode, provider_season=provider_season)
+                if plan.fixture_ids:
+                    capped_client = RequestCappedProvider(client, plan.request_budget)
+                    backfill_result = DetailedMatchIngestionService(
+                        connection,
+                        capped_client,
+                        config.data_dir / "quarantine",
+                    ).run(plan.fixture_ids, job_run_id=run_id)
+            if coverage_result is not None:
+                summary.requests_used = len(coverage_result.items)
+                if not coverage_result.complete:
+                    summary.warnings.append("coverage audit stopped before completion")
+            if bootstrap_result is not None:
+                summary.fixtures_discovered = bootstrap_result.fixtures_written
+                summary.fixtures_updated = bootstrap_result.fixtures_written
+                if not bootstrap_result.complete:
+                    summary.warnings.append(
+                        bootstrap_result.blocked_reason or "season bootstrap stopped before completion"
+                    )
+            summary.fixtures_enriched = backfill_result.fixtures_eligible if backfill_result else 0
+            summary.fixtures_quarantined = backfill_result.fixtures_quarantined if backfill_result else 0
+    finally:
+        connection.close()
+
+    coverage_eligible = (
+        sum(item.replay_eligible if ledger_mode == "replay" else item.accepted for item in coverage_result.items)
+        if coverage_result is not None
+        else 0
+    )
+    coverage_text = (
+        "skipped"
+        if coverage_result is None
+        else f"{coverage_eligible}/{len(coverage_result.items)} eligible; complete={coverage_result.complete}"
+    )
+    bootstrap_text = (
+        "skipped"
+        if bootstrap_result is None
+        else f"teams={bootstrap_result.teams_written} fixtures={bootstrap_result.fixtures_written} "
+        f"complete={bootstrap_result.complete}"
+    )
+    console.print(
+        f"Fetch + backfill: ledger={ledger_mode} season={label} coverage={coverage_text} "
+        f"bootstrap=({bootstrap_text}) candidates={plan.candidate_count} "
+        f"request_budget={plan.request_budget} selected={len(plan.fixture_ids)} "
+        f"eligible={backfill_result.fixtures_eligible if backfill_result else 0} "
+        f"quarantined={backfill_result.fixtures_quarantined if backfill_result else 0} "
+        f"daily_remaining_at_start={capabilities.daily_remaining}."
+    )
+
+
 @app.command("enrich")
 def enrich(limit: int = typer.Option(20, min=1, max=200)) -> None:
     """Fetch batched full-match packages for completed fixtures needing detail."""

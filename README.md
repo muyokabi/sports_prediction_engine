@@ -195,6 +195,9 @@ uv run sports-engine models reliability --json
 # keep the request cap explicit and run one season at a time
 uv run sports-engine football historical-backfill --season 2023 --max-requests 250
 
+# Register/fetch a season and backfill its completed fixtures in one resumable run
+uv run sports-engine football fetch-backfill --season 2023 --max-requests 250
+
 # Before upgrades or major maintenance
 $backup = 'D:\sports-engine-backups\YYYY-MM-DD'
 uv run sports-engine data backup $backup
@@ -263,6 +266,12 @@ uv run sports-engine football daily --as-of 2026-10-08
 uv run sports-engine football enrich --limit 20
 uv run sports-engine football backfill
 
+# Combined coverage + team/fixture fetch + detailed completed-fixture backfill
+uv run sports-engine football fetch-backfill
+uv run sports-engine football fetch-backfill --season 2023 --max-requests 250
+uv run sports-engine football fetch-backfill --season 2023 --no-coverage
+uv run sports-engine football fetch-backfill --season 2023 --no-bootstrap
+
 # Mutable results and season lifecycle
 uv run sports-engine football reconcile
 uv run sports-engine football seasons
@@ -278,6 +287,22 @@ uv run sports-engine football quality --summary --detailed
 uv run sports-engine football quality --json
 uv run sports-engine football quality-soak --leagues 3 --fixtures-per-league 2
 ```
+
+`football fetch-backfill` is the one-command seasonal ingestion workflow. With no
+`--season`, it targets the configured current ledger (production in the default
+configuration). Supplying `--season YYYY` safely targets the replay ledger so
+historical data cannot expand the live production fixture universe. Its flags are:
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--season YYYY` | current | Fetch and enrich one historical season in the replay ledger |
+| `--max-requests N` | `1000` | Cap detailed enrichment requests to 1–5000; coverage and skeleton fetching are separate |
+| `--coverage` / `--no-coverage` | `--coverage` | Run or skip competition coverage qualification |
+| `--bootstrap` / `--no-bootstrap` | `--bootstrap` | Run or skip team and fixture-skeleton fetching |
+
+The command is checkpointed and idempotent. Rerun it after a quota stop; use the
+skip flags only when that phase already completed or when intentionally resuming
+a later phase.
 
 ### Features, training, and calibration
 
