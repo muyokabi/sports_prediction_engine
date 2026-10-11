@@ -80,6 +80,7 @@ def _report(tmp_path: Path) -> None:
     output.mkdir()
     payload = {
         "model_type": "logistic",
+        "candidate_version": "logistic-production-candidate",
         "dataset_hash": "promotion-dataset-hash",
         "created_at": "2026-01-02T00:00:00+00:00",
         "fold_metrics": [{"expected_calibration_error": 0.04}] * 4,
@@ -176,4 +177,22 @@ def test_when_available_policy_promotes_without_unobtainable_baseline(tmp_path: 
     assert assessment.gate_results["market_baseline"]["passed"] is True
     assert assessment.gate_results["market_baseline"]["available"] is False
     assert "BOOKMAKER_BASELINE_NOT_OUTPERFORMED" not in assessment.reasons
+    connection.close()
+
+
+def test_promotion_rejects_walk_forward_report_from_another_candidate(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "mismatched-report.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=True)
+    _report(tmp_path)
+    path = next((tmp_path / "evaluation").glob("*.json"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["candidate_version"] = "different-candidate"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = run_automated_promotion(connection, AppConfig(artifacts_dir=tmp_path))
+
+    assert result.promoted_versions == ()
+    assert result.withheld_versions == (version,)
+    assert "WALK_FORWARD_REPORT_MISSING" in result.assessments[0].reasons
     connection.close()

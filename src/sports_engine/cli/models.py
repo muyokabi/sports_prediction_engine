@@ -212,7 +212,7 @@ def reliability(as_json: bool = typer.Option(False, "--json")) -> None:
     manifest_path = Path(row[6]).with_suffix(Path(row[6]).suffix + ".json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
     reports = []
-    for path in (config.artifacts_dir / "evaluation").glob(f"{row[7]}-{str(row[5])[:12]}-*.json"):
+    for path in (config.artifacts_dir / "evaluation").rglob(f"{row[7]}-{str(row[5])[:12]}-*.json"):
         reports.append(json.loads(path.read_text(encoding="utf-8")))
     latest_report: dict[str, Any] = max(reports, key=lambda item: item.get("created_at", ""), default={})
     payload = {

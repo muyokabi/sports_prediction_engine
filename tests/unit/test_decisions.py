@@ -9,7 +9,9 @@ from sports_engine.markets.decision import (
     NoBetReason,
     RiskPolicy,
     decide_wager,
+    validated_nonnegative_policy_value,
 )
+from sports_engine.sports.football.prediction.service import PredictionService
 from sports_engine.training.feedback import _realized_shadow_return
 
 
@@ -183,7 +185,109 @@ def test_institutional_governance_gates_fail_closed() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "probabilities",
+    [
+        {"home": 0.6, "draw": 0.4},
+        {"home": 0.8, "draw": 0.3, "away": -0.1},
+        {"home": 0.6, "draw": 0.3, "away": 0.2},
+        {"home": float("nan"), "draw": 0.5, "away": 0.5},
+    ],
+)
+def test_invalid_probability_vectors_fail_closed(probabilities: dict[str, float]) -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    decision = decide_wager(
+        probabilities,
+        [MarketQuote("home", 0.45, 2.2, now)],
+        decision_time=now,
+        model_metrics=METRICS,
+        calibrated=True,
+        home_history=20,
+        away_history=20,
+        evidence=EVIDENCE,
+        risk=RISK,
+        **GOVERNANCE_GATES,
+    )
+    assert decision.state == "NO_BET"
+    assert decision.reasons == (NoBetReason.INVALID_MODEL_PROBABILITIES,)
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        MarketQuote("unknown", 0.45, 2.2, datetime(2026, 10, 7, 12, tzinfo=UTC)),
+        MarketQuote("home", float("nan"), 2.2, datetime(2026, 10, 7, 12, tzinfo=UTC)),
+        MarketQuote("home", 0.45, float("inf"), datetime(2026, 10, 7, 12, tzinfo=UTC)),
+    ],
+)
+def test_invalid_reference_values_are_rejected_without_key_errors(quote: MarketQuote) -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    decision = decide_wager(
+        {"home": 0.6, "draw": 0.2, "away": 0.2},
+        [quote],
+        decision_time=now,
+        model_metrics=METRICS,
+        calibrated=True,
+        home_history=20,
+        away_history=20,
+        evidence=EVIDENCE,
+        risk=RISK,
+        **GOVERNANCE_GATES,
+    )
+    assert decision.state == "NO_BET"
+    assert NoBetReason.INVALID_REFERENCE_ODDS in decision.reasons
+
+
 def test_institutional_governance_gates_cannot_be_silently_omitted() -> None:
     parameters = signature(decide_wager).parameters
     for name in GOVERNANCE_GATES:
         assert parameters[name].default is Parameter.empty
+
+
+def test_validated_margin_and_uncertainty_are_consumed_by_execution_decision() -> None:
+    governed, margin_validated, uncertainty_validated = PredictionService._governed_risk_policy(
+        {
+            "minimum_odds_policy": {"validated": True, "required_expected_return": 0.03},
+            "uncertainty_policy": {"validated": True, "expected_return_adjustment": 0.02},
+        },
+        RISK,
+    )
+    assert margin_validated and uncertainty_validated
+    assert governed.minimum_expected_value == pytest.approx(0.05)
+
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    decision = decide_wager(
+        {"home": 0.6, "draw": 0.2, "away": 0.2},
+        [MarketQuote("home", 0.50, 1.7, now)],
+        decision_time=now,
+        model_metrics=METRICS,
+        calibrated=True,
+        home_history=20,
+        away_history=20,
+        evidence=EVIDENCE,
+        risk=governed,
+        **GOVERNANCE_GATES,
+    )
+    assert decision.state == "NO_BET"
+    assert NoBetReason.NON_POSITIVE_EXPECTED_VALUE in decision.reasons
+
+
+@pytest.mark.parametrize("bad_value", [None, True, -0.01, float("nan"), "not-a-number"])
+def test_invalid_validated_policy_values_fail_closed(bad_value: object) -> None:
+    governed, margin_validated, uncertainty_validated = PredictionService._governed_risk_policy(
+        {
+            "minimum_odds_policy": {"validated": True, "required_expected_return": bad_value},
+            "uncertainty_policy": {"validated": True, "expected_return_adjustment": 0.02},
+        },
+        RISK,
+    )
+    assert not margin_validated
+    assert uncertainty_validated
+    assert governed == RISK
+    assert (
+        validated_nonnegative_policy_value(
+            {"validated": True, "required_expected_return": bad_value},
+            "required_expected_return",
+        )
+        is None
+    )

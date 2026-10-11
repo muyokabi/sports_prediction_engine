@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 
 import polars as pl
@@ -77,6 +78,9 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     assert row[:3] == (model_type, "candidate", "dataset-hash-synthetic")
     assert json.loads(row[3])["test_rows"] == 6
     assert Path(row[4]).is_file()
+    assert result.artifact_path.parts[-6] == "models"
+    year, month, day = result.artifact_path.parts[-5:-2]
+    assert f"{year}{month}{day}T" in result.version
     # The scheduler compares against all immutable dataset observations, not
     # only the fitting partition; otherwise validation/test rows would make a
     # freshly trained model immediately appear due again.
@@ -87,6 +91,7 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     manifest = json.loads(result.artifact_path.with_suffix(".pkl.json").read_text())
     assert manifest["class_order"] == ["HOME", "DRAW", "AWAY"]
     assert manifest["random_seed"] == 7
+    assert manifest["artifact_sha256"] == sha256(result.artifact_path.read_bytes()).hexdigest()
     assert json.loads(row[3])["bookmaker_baseline"]["rows"] == 6
     if model_type in {"elo", "poisson", "dixon-coles"}:
         deployment = json.loads(row[3])["deployment_refit"]
@@ -110,7 +115,10 @@ def test_calibration_uses_validation_holdout_and_is_persisted(tmp_path: Path) ->
     ).fetchone()
     assert row[0] == "platt"
     assert "uncalibrated" in json.loads(row[1])
-    assert (result.artifact_path.parent / "calibrator.pkl").is_file()
+    calibrator_path = result.artifact_path.parent / "calibrator.pkl"
+    assert calibrator_path.is_file()
+    manifest = json.loads(result.artifact_path.with_suffix(".pkl.json").read_text())
+    assert manifest["calibrator_sha256"] == sha256(calibrator_path.read_bytes()).hexdigest()
     connection.close()
 
 
@@ -175,9 +183,13 @@ def test_walk_forward_evaluation_writes_reproducible_report(tmp_path: Path) -> N
     connection = connect(tmp_path / "evaluation.duckdb")
     migrate(connection)
     _dataset(connection, tmp_path)
+    candidate = ModelTrainer(connection, tmp_path / "artifacts", random_seed=7, cpu_threads=1).train(
+        "logistic", dataset_name="synthetic"
+    )
     report = WalkForwardEvaluator(connection, tmp_path / "reports", random_seed=7, cpu_threads=1).evaluate(
         "logistic", dataset_name="synthetic"
     )
+    assert json.loads(report.path.read_text())["candidate_version"] == candidate.version
     assert report.aggregate_metrics["folds"] == 4
     assert report.aggregate_metrics["test_rows"] == 12
     assert report.aggregate_metrics["bookmaker_baseline"]["rows"] == 12

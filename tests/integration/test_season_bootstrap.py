@@ -59,18 +59,20 @@ class BootstrapProvider:
         raise AssertionError(endpoint)
 
 
-def admitted_season(connection: Any) -> None:
+def admitted_season(connection: Any, *, year: int = 2026, ledger_mode: str = "production") -> None:
     upsert_competition_season(
         connection,
         {"id": 39, "name": "League", "country": "Country", "type": "League"},
         {
-            "year": 2026,
+            "year": year,
             "start": "2026-08-01",
             "end": "2027-05-31",
             "current": True,
             "coverage": {},
         },
         admitted=True,
+        replay_eligible=ledger_mode == "replay",
+        ledger_mode=ledger_mode,
         reason="qualified",
         priority=1,
         source_raw_path="coverage.json.gz",
@@ -147,6 +149,30 @@ def test_fixture_correction_is_append_only_and_current_view_updates(tmp_path: Pa
     )
     assert connection.execute("SELECT count(*) FROM fixture_schedule_snapshots").fetchone() == (2,)
     assert connection.execute("SELECT count(*) FROM fixture_status_history").fetchone() == (2,)
+    connection.close()
+
+
+def test_completed_replay_bootstrap_is_not_refetched_on_resume(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "historical-idempotency.duckdb")
+    migrate(connection)
+    admitted_season(connection, year=2025, ledger_mode="replay")
+    first_provider = BootstrapProvider()
+    first = SeasonBootstrapService(
+        connection,
+        first_provider,
+        raw_path_resolver=lambda purpose, run_id: "historical.json.gz",
+    ).run(ledger_mode="replay", provider_season=2025)
+    assert first.complete
+    assert first_provider.endpoints == [str(Endpoint.TEAMS), str(Endpoint.FIXTURES)]
+
+    resumed_provider = BootstrapProvider()
+    resumed = SeasonBootstrapService(
+        connection,
+        resumed_provider,
+        raw_path_resolver=lambda purpose, run_id: "historical.json.gz",
+    ).run(ledger_mode="replay", provider_season=2025)
+    assert resumed.complete and resumed.next_stage == "complete"
+    assert resumed_provider.endpoints == []
     connection.close()
 
 

@@ -1,5 +1,7 @@
 # Institutional Pricing Engine Acceptance Report
 
+> Historical evidence only. Current classification is `RESEARCH_ONLY / FAIL_CLOSED`; see `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+
 Report date: 2026-10-08 (Africa/Nairobi)
 
 Overall state: **IN PROGRESS — CORE PRICING VERIFIED OFFLINE; MODEL EVIDENCE ACCUMULATING**

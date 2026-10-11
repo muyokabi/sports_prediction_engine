@@ -1,7 +1,6 @@
 import json
-import pickle
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -17,10 +16,12 @@ from sports_engine.markets.decision import (
     MarketQuote,
     RiskPolicy,
     decide_wager,
+    validated_nonnegative_policy_value,
 )
 from sports_engine.models.ml.catboost import CatBoostProbabilityModel
 from sports_engine.models.ml.lightgbm import LightGBMProbabilityModel
 from sports_engine.models.ml.logistic import LogisticProbabilityModel
+from sports_engine.models.serialization import load_pickle
 from sports_engine.models.statistical.dixon_coles import DixonColesModel
 from sports_engine.models.statistical.elo import EloModel
 from sports_engine.models.statistical.poisson import PoissonModel
@@ -80,7 +81,8 @@ class PredictionService:
             "mr.training_dataset_hash "
             "FROM model_runs mr LEFT JOIN model_market_roles r ON r.model_version=mr.version "
             "AND r.market_family='MATCH_ODDS' AND r.role_name='MATCH_ODDS_CHAMPION' AND r.state='CHAMPION' "
-            "WHERE r.role_id IS NOT NULL OR mr.status='champion' "
+            "WHERE mr.evidence_state='PRODUCTION_ACTIONABLE' "
+            "AND (r.role_id IS NOT NULL OR mr.status='champion') "
             "ORDER BY CASE WHEN r.role_id IS NOT NULL THEN 0 ELSE 1 END, r.selected_at DESC NULLS LAST, "
             "mr.created_at DESC LIMIT 1"
         ).fetchone()
@@ -109,7 +111,11 @@ class PredictionService:
             calibration_path = artifact_path.parent / "calibrator.pkl"
             if not calibration_path.is_file():
                 raise ValueError(f"Champion calibration artifact is missing: {calibration_path}")
-            calibrator = pickle.loads(calibration_path.read_bytes())
+            calibrator = load_pickle(
+                calibration_path,
+                metadata_path=manifest_path,
+                hash_field="calibrator_sha256",
+            )
             probabilities = calibrator.transform(probabilities)
         calibration_row = self.connection.execute(
             "SELECT state FROM calibration_validations WHERE model_version=? AND market_family='MATCH_ODDS' "
@@ -123,10 +129,10 @@ class PredictionService:
         ).fetchone()
         calibration_validated = bool(calibration_row and calibration_row[0] == "CALIBRATION_VALIDATED")
         market_role_qualified = bool(role_row and role_row[0] == "CHAMPION")
-        uncertainty_policy = model_metrics.get("uncertainty_policy")
-        margin_policy = model_metrics.get("minimum_odds_policy")
-        uncertainty_validated = isinstance(uncertainty_policy, dict) and uncertainty_policy.get("validated") is True
-        margin_validated = isinstance(margin_policy, dict) and margin_policy.get("validated") is True
+        governed_risk, margin_validated, uncertainty_validated = self._governed_risk_policy(
+            model_metrics,
+            self.risk_policy,
+        )
         prediction_run_id = str(uuid.uuid4())
         odds_time = self.connection.execute(
             "SELECT max(o.observed_at) FROM odds_snapshots o JOIN fixtures_current f USING (fixture_id) "
@@ -156,11 +162,10 @@ class PredictionService:
                 ]
                 quotes = self._quotes(str(row["fixture_id"]), observed)
                 probabilities_by_name = dict(zip(("home", "draw", "away"), probabilities[index].tolist(), strict=True))
-                exposure_row = self.connection.execute(
-                    "SELECT coalesce(sum(stake_fraction), 0), count(*) FROM prediction_decisions "
-                    "WHERE state='BET_IF_PRICE_AVAILABLE' AND CAST(decision_timestamp AS DATE)=CAST(? AS DATE)",
-                    [observed],
-                ).fetchone()
+                current_exposure, active_recommendations = self._current_portfolio_exposure(
+                    observed,
+                    str(row["fixture_id"]),
+                )
                 competition_row = self.connection.execute(
                     "SELECT CAST(f.competition_season_id AS VARCHAR), d.universe_state "
                     "FROM fixtures_current f LEFT JOIN competition_discoveries d "
@@ -185,9 +190,9 @@ class PredictionService:
                     home_history=int(row.get("home_history_matches") or 0),
                     away_history=int(row.get("away_history_matches") or 0),
                     evidence=self.evidence_policy,
-                    risk=self.risk_policy,
-                    current_daily_exposure=float(exposure_row[0]) if exposure_row else 0.0,
-                    active_recommendations=int(exposure_row[1]) if exposure_row else 0,
+                    risk=governed_risk,
+                    current_daily_exposure=current_exposure,
+                    active_recommendations=active_recommendations,
                     fixture_applicable=fixture_applicable,
                     competition_actionable=bool(competition_row and competition_row[1] == "ACTIONABLE"),
                     market_family_qualified=market_role_qualified,
@@ -290,6 +295,26 @@ class PredictionService:
         )
         return PredictionResult(prediction_run_id, model_version, frame.height, output)
 
+    @staticmethod
+    def _governed_risk_policy(
+        model_metrics: dict[str, object],
+        configured: RiskPolicy,
+    ) -> tuple[RiskPolicy, bool, bool]:
+        """Consume validated return hurdles and fail closed on malformed policy data."""
+
+        required_return = validated_nonnegative_policy_value(
+            model_metrics.get("minimum_odds_policy"),
+            "required_expected_return",
+        )
+        uncertainty_adjustment = validated_nonnegative_policy_value(
+            model_metrics.get("uncertainty_policy"),
+            "expected_return_adjustment",
+        )
+        if required_return is None or uncertainty_adjustment is None:
+            return configured, required_return is not None, uncertainty_adjustment is not None
+        hurdle = required_return + uncertainty_adjustment
+        return replace(configured, minimum_expected_value=max(configured.minimum_expected_value, hurdle)), True, True
+
     def _training_domain(self, model_type: str, model: Any, dataset_hash: str) -> TrainingDomain:
         """Recover the exact chronological training domain; missing lineage fails closed."""
         if model_type in {"poisson", "dixon-coles"}:
@@ -322,6 +347,18 @@ class PredictionService:
         ).fetchall()
         competitions = frozenset(str(value[0]) for value in rows)
         return TrainingDomain(teams, competitions, bool(teams and competitions))
+
+    def _current_portfolio_exposure(self, observed: datetime, fixture_id: str) -> tuple[float, int]:
+        """Count one active allocation per other fixture so repricing is idempotent."""
+        row = self.connection.execute(
+            "WITH fixture_exposure AS ("
+            "SELECT CAST(fixture_id AS VARCHAR) fixture_id, max(stake_fraction) stake_fraction "
+            "FROM prediction_decisions WHERE state='BET_IF_PRICE_AVAILABLE' "
+            "AND CAST(decision_timestamp AS DATE)=CAST(? AS DATE) GROUP BY fixture_id) "
+            "SELECT coalesce(sum(stake_fraction), 0), count(*) FROM fixture_exposure WHERE fixture_id<>?",
+            [observed, fixture_id],
+        ).fetchone()
+        return (float(row[0]), int(row[1])) if row else (0.0, 0)
 
     @staticmethod
     def _fixture_applicability(

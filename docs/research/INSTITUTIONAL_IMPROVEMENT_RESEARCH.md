@@ -1,29 +1,26 @@
 # Institutional Improvement Research
 
-Research accessed 2026-10-09. Primary papers and official documentation were preferred. Findings below influenced this run only where repository evidence supported the change.
+Reviewed 2026-10-11. Primary papers and official documentation were used; no network access was performed after the operator reported the connectivity outage.
 
-| Source | Evidence type | Relevant finding | Implementation implication |
-|---|---|---|---|
-| [Dixon & Coles (1997), Applied Statistics](https://www.research.lancs.ac.uk/portal/en/publications/modelling-association-football-scores-and-inefficiencies-in-the-football-betting-market%28d16276a2-d6e0-483b-a708-1d29663f1992%29.html) | Empirical/theoretical | Low-score dependence and time weighting can improve football score modelling; complexity must be tested against a Poisson baseline. | Retain Dixon-Coles as a challenger/champion candidate; do not assume superiority. Record unweighted rho fitting as an experiment, not an automatic rewrite. |
-| [Gneiting & Raftery, strictly proper scoring rules](https://doi.org/10.1198/016214506000001437) | Theoretical | Proper scores reward honest full probability distributions. | Keep log loss and Brier primary; do not promote on accuracy or ROI alone. |
-| [Wheatcroft, football forecast scoring](https://www.degruyterbrill.com/document/doi/10.1515/jqas-2019-0089/html) | Football-specific empirical/theoretical | RPS adds ordinal assumptions and should not be the sole model selector. | Report RPS alongside log loss/Brier, never alone. |
-| [scikit-learn TimeSeriesSplit](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html) | Official library guidance | Ordinary random CV can train on future data; time-ordered splits preserve direction. | Preserve chronological split/walk-forward evaluation and adversarial timing tests. |
-| [CatBoost classification objectives](https://catboost.ai/docs/en/concepts/loss-functions-classification) | Official library documentation | Logloss and Brier are probability-oriented metrics; classifier output still requires out-of-sample calibration assessment. | Keep CatBoost as a challenger; accept neither raw discrimination nor calibration automatically. |
-| [Niculescu-Mizil & Caruana, predicting good probabilities](https://icml.cc/Conferences/2005/proceedings/papers/079_GoodProbabilities_NiculescuMizilCaruana.pdf) | Empirical | Different classifiers produce characteristic probability distortions; Platt and isotonic calibration require held-out evidence. | Fit calibration only on the validation era and assess it separately on later data. |
-| [LightGBM parameters](https://lightgbm.readthedocs.io/en/latest/Parameters.html) | Official library documentation | Multiclass probability objectives are supported, but probability quality and calibration are separate concerns. | Keep LightGBM behind validation-only calibration and promotion gates. |
-| [API-Football guide](https://www.api-football.com/news/post/how-to-get-started-with-api-football-the-complete-beginners-guide) | Official provider guidance | Odds bets/bookmakers are provider taxonomies, and pagination/rate limits are integral to collection. | Preserve raw IDs, canonical mappings, complete pagination, caching, and quota reserves; do not infer unsupported semantics. |
-| [API-Sports quota optimization](https://www.api-football.com/news/post/how-to-optimize-api-sports-calls-and-quota-usage) | Official provider guidance | Multi-fixture requests reduce endpoint calls and pagination metadata must be followed to completion. | Retain verified multi-ID batching, page checkpoints, and complete-pagination reconciliation. |
-| [DuckDB concurrency](https://www.duckdb.org/docs/current/connect/concurrency) | Official database documentation | File-backed DuckDB supports one read-write process; multi-process server writes need coordination or another boundary. | Keep DuckDB locally, serialize writes, and document the server-readiness boundary. |
-| [Distributionally robust Kelly](https://arxiv.org/abs/1812.10371) | Theoretical | Growth-optimal stakes are sensitive to uncertainty in the estimated distribution. | Fractional Kelly is insufficient by itself; require validated uncertainty and margin policies before actionability. |
+| Source | Finding | Applied conclusion |
+|---|---|---|
+| [Dixon & Coles (1997)](https://doi.org/10.1111/1467-9876.00065) | Low-score dependence and time weighting can improve association-football score models. | Retain Dixon-Coles as a challenger and compare chronologically; do not assume it beats Poisson. Weighted-rho fitting remains an experiment. |
+| [Gneiting & Raftery (2007)](https://doi.org/10.1198/016214506000001437) | Strictly proper scores reward honest full probability distributions. | Promotion remains based on held-out log loss/Brier/RPS/calibration evidence, never accuracy or ROI alone. |
+| [scikit-learn `TimeSeriesSplit`](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html) | Time-ordered splitting prevents training on future observations. | Candidate-specific walk-forward reports now reproduce that candidate's features, hyperparameters, and calibration inside each fold. |
+| [CatBoost classification objectives](https://catboost.ai/docs/en/concepts/loss-functions-classification) | Probabilistic objectives do not by themselves establish out-of-sample calibration. | CatBoost remains a challenger behind later-period calibration and exact-candidate gates. |
+| [API-Football guide](https://www.api-football.com/news/post/how-to-get-started-with-api-football-the-complete-beginners-guide) and [quota guidance](https://www.api-football.com/news/post/how-to-optimize-api-sports-calls-and-quota-usage) | Pagination and quota accounting are part of data correctness. | Durable request telemetry and resumable checkpoints are first-class evidence; completed replay seasons are not refetched on resume. |
+| [DuckDB concurrency](https://duckdb.org/docs/current/connect/concurrency) | A local file database should use a coordinated writer. | Preserve the exclusive job lock and serialized writes; do not represent this as a multi-writer server architecture. |
+| [Baker & McHale, modified Kelly](https://www.sfu.ca/~tswartz/papers/kelly.pdf) | Estimation uncertainty should reduce exposure. | Fractional Kelly cannot substitute for validated uncertainty and return-margin policies; missing policy fails closed. |
 
-## Hypotheses and decisions
+## Decisions from this audit
 
-1. Requiring explicit decision gates would eliminate a silent permissive fallback without changing qualified outputs. This was implemented and regression-tested.
-2. Exact training-lineage competition membership would reclassify falsely in-domain fixtures and can only reduce actionability. This was implemented and adversarially tested.
-3. Replacing Dixon-Coles, adding a bivariate/hierarchical model, or changing decay may improve score forecasts, but the current ledger does not contain an experiment proving that. These changes were rejected for this run.
-4. CatBoost currently has the best aggregate walk-forward log loss among the newest evaluated candidates, but its interval overlaps statistical models and no sufficient point-in-time market baseline exists. Promotion was correctly rejected.
-5. Threshold selection from realized ROI would overfit a noisy downstream outcome. No EV, uncertainty, or staking threshold was tuned on final-test ROI.
+1. Exact model lineage and exact evaluation-candidate identity are decision-critical. Family- or dataset-level similarity is insufficient.
+2. Probability vectors and all policy values must be finite, bounded, and correctly normalized before any market decision.
+3. A failed provider run must report requests from durable evidence, not only in-memory counters.
+4. Historical bootstrap is idempotent only if completion is bound to the exact season universe and corroborated by local rows.
+5. Additional model complexity is not justified by the current 161-row eligible sample. No new model family or optimistic threshold was introduced.
+6. Zero odds observations means market superiority, robust edge, shadow profitability, and execution suitability are unknown—not zero and not positive.
 
-## Required future experiments
+## Required future evidence
 
-Prospectively accumulate immutable pre-match market snapshots and shadow outcomes; compare calibrated candidates with de-vigged market probabilities on paired fixtures; run blocked bootstrap comparisons; validate uncertainty and margin policies on a validation era; then freeze them for a later test era. Separately benchmark weighted-rho Dixon-Coles and competition-aware partial pooling against the current score models. No experiment may reuse final-test outcomes for threshold selection.
+Finish the resumable historical backfill, rebuild immutable features, train new candidates, and run candidate-bound chronological evaluation. Separately collect prospective pre-match odds and shadow outcomes. Compare models against de-vigged references on identical timestamp-correct fixtures, use blocked uncertainty intervals, freeze uncertainty/margin policies before a later test era, and only then consider promotion. Never reconstruct unavailable historical odds or select thresholds on final-test ROI.

@@ -1,5 +1,7 @@
 # Prediction Probability Forensics
 
+> Historical evidence only. Current models have no validated production probability scopes; see `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+
 Date: 2026-10-10 (Africa/Nairobi)
 
 ## Verdict

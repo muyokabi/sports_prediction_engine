@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 
 
 class NoBetReason(StrEnum):
+    INVALID_MODEL_PROBABILITIES = "INVALID_MODEL_PROBABILITIES"
     INSUFFICIENT_HISTORICAL_SAMPLE = "INSUFFICIENT_HISTORICAL_SAMPLE"
     INSUFFICIENT_CLASS_OBSERVATIONS = "INSUFFICIENT_CLASS_OBSERVATIONS"
     INSUFFICIENT_VALIDATION_SAMPLE = "INSUFFICIENT_VALIDATION_SAMPLE"
@@ -81,6 +83,20 @@ class BettingDecision:
     manual_price_confirmation_required: bool = True
 
 
+def validated_nonnegative_policy_value(policy: object, field: str) -> float | None:
+    """Return a finite governed policy value only when validation is explicit."""
+    if not isinstance(policy, dict) or policy.get("validated") is not True:
+        return None
+    raw = policy.get(field)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if isfinite(value) and value >= 0 else None
+
+
 def decide_wager(
     probabilities: dict[str, float],
     quotes: list[MarketQuote],
@@ -104,6 +120,18 @@ def decide_wager(
     def count(name: str) -> int:
         value = model_metrics.get(name, 0)
         return int(value) if isinstance(value, (int, float, str)) else 0
+
+    expected_outcomes = {"home", "draw", "away"}
+    if (
+        set(probabilities) != expected_outcomes
+        or any(not isfinite(value) or value < 0 or value > 1 for value in probabilities.values())
+        or abs(sum(probabilities.values()) - 1.0) > 1e-6
+    ):
+        return BettingDecision(
+            "NO_BET",
+            (NoBetReason.INVALID_MODEL_PROBABILITIES,),
+            manual_price_confirmation_required=True,
+        )
 
     reasons: list[str] = []
     if not fixture_applicable:
@@ -147,7 +175,16 @@ def decide_wager(
         reasons.append(NoBetReason.MODEL_NOT_CALIBRATED)
     if max(probabilities.values()) < evidence.minimum_prediction_confidence:
         reasons.append(NoBetReason.EXCESSIVE_UNCERTAINTY)
-    valid_quotes = [quote for quote in quotes if quote.decimal_odds > 1 and quote.observed_at <= decision_time]
+    valid_quotes = [
+        quote
+        for quote in quotes
+        if quote.outcome in expected_outcomes
+        and isfinite(quote.decimal_odds)
+        and quote.decimal_odds > 1
+        and isfinite(quote.fair_probability)
+        and 0 <= quote.fair_probability <= 1
+        and quote.observed_at <= decision_time
+    ]
     if fixture_kickoff is not None:
         post_kickoff = [quote for quote in valid_quotes if quote.observed_at >= fixture_kickoff]
         valid_quotes = [quote for quote in valid_quotes if quote.observed_at < fixture_kickoff]

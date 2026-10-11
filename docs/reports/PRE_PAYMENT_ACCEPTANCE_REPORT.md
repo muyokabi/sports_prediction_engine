@@ -1,5 +1,7 @@
 # Pre-Payment Acceptance Report
 
+> Historical evidence only. It is not a current production or wagering approval; see `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+
 > Historical evidence notice: this report records the behavior of the earlier pre-payment build. Its fixed-age odds-expiry conclusion was superseded by migration 026 and the API-Football reference-odds semantics acceptance report. Current production behavior treats quote age as visible reference metadata, not an automatic `NO_BET` veto.
 
 Audit date: 2026-10-07 (Africa/Nairobi)

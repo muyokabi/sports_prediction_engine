@@ -1,56 +1,64 @@
 # Current System Baseline
 
-Post-upgrade evidence snapshot taken 2026-10-10 (Africa/Nairobi). This is an operational and research baseline, not a real-money betting approval.
+Verified 2026-10-11 (Africa/Nairobi) from the current DuckDB warehouse. This file supersedes earlier snapshots whose counts and production claims do not describe this checkout's warehouse.
 
-## Architecture and operating boundary
+## Classification
 
-API-Football responses are retained as compressed raw evidence, normalized into DuckDB, qualified for point-in-time use, converted into immutable Parquet datasets, evaluated chronologically, and persisted as predictions, reference prices, governed opportunities, paper outcomes, and HTML reports. Production targets remain separate from the replay ledger; configured replay ledgers may contribute only earlier completed-match history.
+`RESEARCH_ONLY / FAIL_CLOSED`
 
-The supported operating state is `SHADOW`: paper opportunities can be discovered, capped, persisted, and settled. Real-money action remains fail-closed because no market-family champion, validated uncertainty/margin policy, broker execution price, liquidity/slippage model, or settled prospective paper sample exists.
+The software is suitable for offline research and data accumulation. It is not suitable for real-money decisions: there are no odds observations, institutional predictions, opportunities, shadow results, production-actionable models, or model/market champions in the current warehouse.
 
-## Current ledger
+## Architecture
+
+The supported flow is immutable raw API evidence, validated normalization, DuckDB operational state, point-in-time feature datasets, chronological training/evaluation, governed registry selection, persisted analysis, and standalone HTML. Production targets and replay history are separated by `ledger_mode`. DuckDB is operated as a serialized single-writer store.
+
+## Verified warehouse
 
 | Evidence | Value |
 |---|---:|
-| Competitions / competition seasons | 1,240 / 1,250 |
-| Teams / fixtures / completed | 882 / 17,838 / 8,877 |
-| Quality assessed / ML eligible / pending repair | 5,754 / 3,203 / 2,551 |
-| Production / replay ML-eligible history | 2,962 / 241 |
-| Odds snapshots / price rows / fixtures with odds | 915 / 2,732,453 / 266 |
-| Model runs | 30 |
-| Institutional predictions / opportunities | 1,966 / 194,676 |
-| Shadow rows / active / settled | 380 / 18 / 0 |
-| Running jobs / running analyses | 0 / 0 |
+| Competitions / competition seasons | 10 / 60 |
+| Teams / fixtures / completed | 279 / 19,774 / 17,179 |
+| Quality assessed / ML eligible / pending repair | 250 / 161 / 89 |
+| Production seasons / fixtures / completed / ML eligible | 10 / 3,174 / 584 / 107 |
+| Replay seasons / fixtures / completed / ML eligible | 50 / 16,600 / 16,595 / 54 |
+| Odds snapshots / prices / bookmakers / markets | 0 / 0 / 0 / 0 |
+| Feature datasets / model runs | 2 / 10 |
+| Legacy or institutional predictions | 0 |
+| Opportunities / shadow observations | 0 / 0 |
+| Competition-discovery states / probability scopes / applicability rows | 0 / 0 / 0 |
 
-Competition discovery remains deliberately narrow: 10 `ACTIONABLE`, 58 `OBSERVATION`, 1,068 `DISCOVERED`, and 104 `REJECTED`. Odds refresh now requests only scheduled `ACTIONABLE` competition-seasons rather than scanning the global provider date surface.
+All 89 pending repairs have one recorded attempt. Of 250 assessed fixtures, team-stat components are incomplete for 76 and player-stat components are incomplete for 17. Missing provider data remains quarantined rather than imputed.
 
-## Data and models
+## Models
 
-The 2024 replay season began with 3,276 completed skeletons and zero usable detailed packages. A request-capped tranche selected 298 fixtures across two measured runs and produced 241 ML-eligible packages; 46 provider-incomplete packages remain pending repair. The successful 250-request run used only 59 detail calls plus status to make 205 of 238 selected fixtures eligible.
+The registry contains ten immutable candidates: Elo, Poisson, Dixon-Coles, logistic, CatBoost, and LightGBM across two small training rounds. The latest candidates used 107 observations; earlier candidates used 40. Elo is `VALIDATION_ELIGIBLE`; the remaining latest models are `RESEARCH_TRAINABLE`. Every recorded market role is `CHALLENGER`; there is no champion.
 
-All six model families were refitted on 3,203 chronological observations. Latest aggregate walk-forward evidence uses 1,567 test predictions:
+Artifact applicability now derives from exact fitted fixture/team/competition lineage. New pickle artifacts carry SHA-256 digests for the model and calibrator. Older hashless artifacts remain readable only as trusted-local legacy artifacts and cannot acquire missing lineage implicitly.
 
-| Model | Log loss | Brier | RPS | ECE |
-|---|---:|---:|---:|---:|
-| CatBoost | 1.045485 | 0.628637 | 0.218581 | 0.029409 |
-| Dixon-Coles | 1.057779 | 0.638023 | 0.223210 | 0.016180 |
-| Poisson | 1.058073 | 0.638119 | 0.223226 | 0.021366 |
-| Elo | 1.067538 | 0.645178 | 0.226565 | 0.012974 |
-| LightGBM | 1.125240 | 0.676498 | 0.235814 | 0.117577 |
-| Logistic | 1.128485 | 0.679109 | 0.233872 | 0.096100 |
+## Current interrupted backfill
 
-No model was promoted. The improvement in CatBoost and the score models is useful research evidence, but not proof of market superiority.
+`football.fetch_backfill.replay.last-5` stopped at 2026-10-11 09:06:05 +03:00 with `PROVIDER_UNAVAILABLE` after DNS resolution failed. Durable request evidence records 112 logical requests since the run began, 111 billable when `/status` is excluded. The old failure summary incorrectly recorded zero requests; subsequent runs now derive request counts from the durable request log on both success and failure.
 
-## Opportunity acceptance
+The detailed-ingestion checkpoint is preserved at index 3. Bootstrap state is resumable. Completed historical replay seasons are now recognized from their local teams/fixtures and marked complete without downloading them again; current production seasons still refresh normally.
 
-The current-price acceptance run `7df3a009-ec1b-48a6-9e4f-7688298f119c` completed 125/125 fixtures for 2026-10-11. It persisted 8 retained `WATCH/SHADOW_ACTIONABLE` opportunities and 20 cap-rejected paper qualifiers. Retained markets were match odds and total goals; each had 7–10 reference snapshots. Shadow policy requires a fresh reference, actionable competition, fitted teams, minimum effective history, limited prior dependence, at least two bookmakers, expected reference return of at least 3%, probability advantage of at least 3%, and absolute model/market disagreement no greater than 15%.
+## Artifact layout
 
-Every active row is paper-only, requires manual price confirmation, carries `SHADOW_ONLY_NOT_PRODUCTION_APPROVED`, and has null robust and execution edge. Shadow settlement now supports match odds, BTTS, and whole/half/quarter total lines, but zero active candidate has matured yet.
+New artifacts are partitioned by creation date:
 
-## Known limitations
+- `artifacts/reports/YYYY/MM/DD/analysis-*.html`
+- `artifacts/models/YYYY/MM/DD/<version>/`
+- `artifacts/evaluation/YYYY/MM/DD/*.json`
 
-- Real-money validity is blocked by missing prospective settlement, closing-line, calibration, uncertainty, margin, commission, liquidity, and execution evidence.
-- 2,551 assessed packages remain pending repair; provider-null detail is quarantined rather than imputed.
-- Only the first useful 2024 historical tranche has been enriched. Finish high-yield 2024 collection before registering older seasons.
-- Model artifacts use trusted-local pickle provenance; signing/verification is still recommended before remote deployment.
-- Full HTML audit payloads remain large.
+Existing flat artifacts are intentionally not moved. Registry paths remain authoritative, and recursive evaluation discovery preserves compatibility.
+
+## Operational boundary
+
+- Resume the same backfill command after connectivity returns; do not edit checkpoints manually.
+- Do not run a second writer while backfill, training, or analysis is active.
+- No provider request or connectivity probe was made after the reported outage.
+- Collect prospective odds before claiming any market comparison, calibration scope, shadow performance, or execution edge.
+- Retrain and re-evaluate after a materially larger ML-eligible replay sample exists.
+
+## Acceptance evidence
+
+Offline analysis `a12eaf9a-95e5-42f4-884d-6fc49904d407` reconciled 6/6 fixtures without provider calls and produced a dated HTML artifact. Backup `artifacts/backups/institutional-audit-2026-10-11` independently verified schema 33, 571 files, and nine critical table counts. The post-run warehouse integrity audit passed.

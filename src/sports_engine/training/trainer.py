@@ -12,6 +12,7 @@ import duckdb
 import numpy as np
 import polars as pl
 
+from sports_engine.core.paths import dated_artifact_directory
 from sports_engine.evaluation.bookmaker_baseline import bookmaker_baseline_metrics
 from sports_engine.evaluation.leakage_audit import audit_temporal_partitions
 from sports_engine.evaluation.metrics import probability_metrics
@@ -206,7 +207,7 @@ class ModelTrainer:
             }
         created_at = datetime.now(UTC)
         version = self._version(model_type, dataset.dataset_hash, created_at)
-        artifact_path = self.artifacts_dir / "models" / version / "model.pkl"
+        artifact_path = dated_artifact_directory(self.artifacts_dir / "models", created_at) / version / "model.pkl"
         model.save(artifact_path)
         if calibrator is not None:
             (artifact_path.parent / "calibrator.pkl").write_bytes(
@@ -263,6 +264,7 @@ class ModelTrainer:
         except Exception:
             artifact_path.unlink(missing_ok=True)
             artifact_path.with_suffix(artifact_path.suffix + ".json").unlink(missing_ok=True)
+            (artifact_path.parent / "calibrator.pkl").unlink(missing_ok=True)
             raise
         return TrainingResult(
             version,
@@ -357,14 +359,7 @@ class ModelTrainer:
                 [(*match, timestamp) for match, timestamp in zip(matches, timestamps, strict=True)],
                 half_life_days=self.time_decay_half_life_days,
             )
-            fixture_ids = [str(value) for value in frame["fixture_id"].to_list()]
-            placeholders = ",".join("?" for _ in fixture_ids)
-            competition_rows = self.connection.execute(
-                "SELECT DISTINCT CAST(competition_season_id AS VARCHAR) FROM fixtures_current "
-                f"WHERE CAST(fixture_id AS VARCHAR) IN ({placeholders}) ORDER BY 1",
-                fixture_ids,
-            ).fetchall()
-            model.fitted_competitions = tuple(str(row[0]) for row in competition_rows)
+            self._attach_score_model_lineage(model, frame)
         metadata = model.metadata()
         if model_type in {"poisson", "dixon-coles"}:
             metadata["time_decay_half_life_days"] = self.time_decay_half_life_days
@@ -396,15 +391,7 @@ class ModelTrainer:
                 timestamps = frame["prediction_timestamp"].to_list()
                 timed_matches = [(*matches[index], timestamps[index]) for index in fold.train]
                 model.fit_timed(timed_matches, half_life_days=self.time_decay_half_life_days)
-                fixture_ids = frame["fixture_id"].to_list()
-                training_fixture_ids = [str(fixture_ids[int(index)]) for index in fold.train]
-                placeholders = ",".join("?" for _ in training_fixture_ids)
-                competition_rows = self.connection.execute(
-                    "SELECT DISTINCT CAST(competition_season_id AS VARCHAR) FROM fixtures_current "
-                    f"WHERE CAST(fixture_id AS VARCHAR) IN ({placeholders}) ORDER BY 1",
-                    training_fixture_ids,
-                ).fetchall()
-                model.fitted_competitions = tuple(str(row[0]) for row in competition_rows)
+                self._attach_score_model_lineage(model, frame[fold.train])
             else:
                 model.fit(train_matches)
             validation_fixtures = [(matches[index][0], matches[index][1]) for index in fold.validation]
@@ -418,6 +405,7 @@ class ModelTrainer:
                 metadata,
                 [],
             )
+
         maximum_missing = load_evidence_policies()[model_type].maximum_missing_fraction
         feature_columns = self._feature_columns(frame, maximum_missing_fraction=maximum_missing)
         matrix = frame.select(feature_columns).cast(pl.Float64).to_numpy()
@@ -458,6 +446,26 @@ class ModelTrainer:
             "validation_log_loss": tuned.validation_log_loss,
         }
         return ml_model, validation_probabilities, probabilities, hyperparameters, feature_columns
+
+    def _attach_score_model_lineage(self, model: Any, frame: pl.DataFrame) -> None:
+        """Persist exact training-row lineage used by fixture applicability."""
+        fixture_ids = [str(value) for value in frame["fixture_id"].to_list()]
+        model.fitted_fixture_ids = tuple(fixture_ids)
+        histories: dict[str, list[tuple[datetime, bool]]] = {}
+        for home, away, timestamp in frame.select("home_team_id", "away_team_id", "prediction_timestamp").iter_rows():
+            histories.setdefault(str(home), []).append((timestamp, True))
+            histories.setdefault(str(away), []).append((timestamp, False))
+        model.fitted_team_history = {
+            team: tuple(sorted(values, key=lambda value: value[0])) for team, values in histories.items()
+        }
+        placeholders = ",".join("?" for _ in fixture_ids)
+        competition_rows = self.connection.execute(
+            "SELECT CAST(competition_season_id AS VARCHAR), count(*) FROM fixtures_current "
+            f"WHERE CAST(fixture_id AS VARCHAR) IN ({placeholders}) GROUP BY 1 ORDER BY 1",
+            fixture_ids,
+        ).fetchall()
+        model.fitted_competition_counts = {str(row[0]): int(row[1]) for row in competition_rows}
+        model.fitted_competitions = tuple(model.fitted_competition_counts)
 
     def _new_ml_model(self, model_type: str) -> Any:
         if model_type == "logistic":

@@ -1,70 +1,61 @@
 {
-  "captured_at": "2026-10-10",
+  "captured_at": "2026-10-11",
   "timezone": "Africa/Nairobi",
-  "snapshot_kind": "post_upgrade_current",
-  "operating_state": "SHADOW_RESEARCH_REAL_MONEY_FAIL_CLOSED",
-  "schema_version": 32,
-  "ledger": {
-    "competitions": 1240,
-    "competition_seasons": 1250,
-    "teams": 882,
-    "fixtures": 17838,
-    "completed_fixtures": 8877,
-    "quality_assessed_fixtures": 5754,
-    "ml_eligible_fixtures": 3203,
-    "production_ml_eligible": 2962,
-    "replay_ml_eligible": 241,
-    "pending_repair_fixtures": 2551,
-    "odds_snapshots": 915,
-    "odds_price_rows": 2732453,
-    "fixtures_with_odds": 266,
-    "model_runs": 30,
-    "institutional_predictions": 1966,
-    "opportunities": 194676,
-    "shadow_rows": 380,
-    "shadow_active": 18,
-    "shadow_settled": 0
+  "classification": "RESEARCH_ONLY_FAIL_CLOSED",
+  "warehouse": {
+    "competitions": 10,
+    "competition_seasons": 60,
+    "teams": 279,
+    "fixtures": 19774,
+    "completed_fixtures": 17179,
+    "quality_assessed": 250,
+    "ml_eligible": 161,
+    "pending_repair": 89,
+    "odds_snapshots": 0,
+    "odds_prices": 0,
+    "bookmakers": 0,
+    "provider_markets": 0,
+    "feature_datasets": 2,
+    "model_runs": 10,
+    "predictions": 0,
+    "institutional_predictions": 0,
+    "institutional_opportunities": 0,
+    "shadow_opportunities": 0
   },
-  "competition_states": {
-    "ACTIONABLE": 10,
-    "OBSERVATION": 58,
-    "DISCOVERED": 1068,
-    "REJECTED": 104
+  "ledgers": {
+    "production": {"competition_seasons": 10, "fixtures": 3174, "completed": 584, "ml_eligible": 107},
+    "replay": {"competition_seasons": 50, "fixtures": 16600, "completed": 16595, "ml_eligible": 54}
   },
-  "historical_enrichment": {
-    "season": 2024,
-    "eligible_added": 241,
-    "pending_repair": 46,
-    "detail_requests_observed": 62,
-    "strategy": "finish_registered_2024_before_adding_older_seasons"
+  "model_governance": {
+    "champions": 0,
+    "market_roles": "CHALLENGER_ONLY",
+    "probability_scopes": 0,
+    "applicability_rows": 0,
+    "latest_training_observations": 107
   },
-  "latest_walk_forward": {
-    "dataset_rows": 3203,
-    "test_predictions": 1567,
-    "log_loss": {
-      "catboost": 1.045485,
-      "dixon_coles": 1.057779,
-      "poisson": 1.058073,
-      "elo": 1.067538,
-      "lightgbm": 1.125240,
-      "logistic": 1.128485
-    },
-    "promotion": "WITHHELD"
+  "interrupted_backfill": {
+    "finished_at": "2026-10-11T09:06:05.745050+03:00",
+    "error_category": "PROVIDER_UNAVAILABLE",
+    "logical_requests": 112,
+    "billable_requests_excluding_status": 111,
+    "detailed_checkpoint_index": 3,
+    "resumable": true
   },
-  "live_shadow_acceptance": {
-    "analysis_run_id": "7df3a009-ec1b-48a6-9e4f-7688298f119c",
-    "date": "2026-10-11",
-    "expected_fixtures": 125,
-    "terminal_fixtures": 125,
-    "retained_shadow_candidates": 8,
-    "portfolio_cap_rejections": 20,
-    "scoped_odds_payloads": 33,
-    "unknown_odds_fixtures": 0
+  "artifact_layout": "artifacts/{reports,models,evaluation}/YYYY/MM/DD",
+  "verification": {
+    "pytest": "190 passed",
+    "ruff": "passed",
+    "mypy": "passed over 160 source files",
+    "offline_end_to_end": "6 expected = 6 terminal",
+    "backup": "schema 33; 571 files; 9 critical table counts",
+    "warehouse_integrity": "passed"
   },
-  "hard_real_money_blockers": [
-    "No settled prospective shadow sample",
-    "No market-family champion",
-    "No validated uncertainty or positive execution-margin policy",
-    "No broker execution price, commission, liquidity, or slippage evidence"
+  "hard_actionability_blockers": [
+    "No odds observations",
+    "No production-actionable market-family champion",
+    "No exact validated probability scopes",
+    "No institutional predictions or opportunities",
+    "No prospective settled shadow evidence",
+    "No broker execution, liquidity, commission, or slippage evidence"
   ]
 }

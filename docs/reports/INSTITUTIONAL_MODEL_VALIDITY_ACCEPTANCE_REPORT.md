@@ -1,5 +1,7 @@
 # Institutional Model Validity Acceptance Report
 
+> Historical evidence only. It does not authorize any current model; the current registry has challengers only. See `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+
 Generated: 2026-10-08 (Africa/Nairobi)
 
 ## Acceptance decision

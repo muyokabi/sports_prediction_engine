@@ -4,11 +4,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import duckdb
 
 from sports_engine.analysis.dependencies import ScheduledFixture, assess_intervening_fixtures
 from sports_engine.core.config import ShadowCandidateConfig
+from sports_engine.core.paths import dated_artifact_directory
+from sports_engine.markets.decision import validated_nonnegative_policy_value
 from sports_engine.markets.pricing import CoreMarketPrices
 from sports_engine.markets.reference import ReferenceQuote, ReferenceState, classify_reference, summarize_references
 from sports_engine.markets.score_distribution import ScoreDistribution
@@ -196,7 +199,10 @@ class AnalysisService:
             state = "COMPLETE" if terminal_count == len(rows) else "INCOMPLETE"
             self._enforce_production_candidate_caps(run_id)
             self._enforce_shadow_candidate_caps(run_id)
-            report_path = self.report_root / f"analysis-{start_date.isoformat()}-{end_date.isoformat()}-{run_id}.html"
+            report_created_at = observed.astimezone(ZoneInfo(timezone))
+            report_path = dated_artifact_directory(self.report_root, report_created_at) / (
+                f"analysis-{start_date.isoformat()}-{end_date.isoformat()}-{run_id}.html"
+            )
             report_context = self._report_context(ledger_mode)
             price_targets = self._report_price_targets(run_id)
             opportunities = tuple(
@@ -650,12 +656,15 @@ class AnalysisService:
         uncertainty_policy = fundamental.metrics.get("uncertainty_policy")
         threshold_payload = threshold_policy if isinstance(threshold_policy, dict) else {}
         uncertainty_payload = uncertainty_policy if isinstance(uncertainty_policy, dict) else {}
-        threshold_validated = threshold_payload.get("validated") is True
-        uncertainty_validated = uncertainty_payload.get("validated") is True
-        required_margin = float(threshold_payload.get("required_expected_return", 0.0)) if threshold_validated else 0.0
-        uncertainty_adjustment = (
-            float(uncertainty_payload.get("expected_return_adjustment", 0.0)) if uncertainty_validated else 0.0
+        governed_margin = validated_nonnegative_policy_value(threshold_payload, "required_expected_return")
+        governed_uncertainty = validated_nonnegative_policy_value(
+            uncertainty_payload,
+            "expected_return_adjustment",
         )
+        threshold_validated = governed_margin is not None
+        uncertainty_validated = governed_uncertainty is not None
+        required_margin = governed_margin if governed_margin is not None else 0.0
+        uncertainty_adjustment = governed_uncertainty if governed_uncertainty is not None else 0.0
         shadow_margin = self.shadow_policy.required_expected_return + self.shadow_policy.uncertainty_buffer
         applied_margin = (
             required_margin + uncertainty_adjustment if threshold_validated and uncertainty_validated else shadow_margin

@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,33 @@ def test_job_run_persists_failure_and_reraises(tmp_path: Path) -> None:
         "SELECT status, error_message, error_category FROM job_runs ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
     assert row == ("failed", "broken", "UNCLASSIFIED_FAILURE")
+    connection.close()
+
+
+def test_job_run_derives_request_count_even_when_job_fails(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "failed-request-telemetry.duckdb")
+    migrate(connection)
+    summary = JobSummary()
+    with (
+        pytest.raises(RuntimeError, match="network lost"),
+        job_run(connection, "test.provider-failure", summary) as identifier,
+    ):
+        connection.execute(
+            "INSERT INTO api_request_log "
+            "(request_id, provider, endpoint, query_hash, started_at, purpose, priority, job_run_id) "
+            "VALUES (?, 'test', '/fixtures', 'hash', current_timestamp, 'test', 'P1', ?)",
+            [uuid.uuid4(), identifier],
+        )
+        connection.execute(
+            "INSERT INTO api_request_log "
+            "(request_id, provider, endpoint, query_hash, started_at, purpose, priority, job_run_id) "
+            "VALUES (?, 'test', '/status', 'hash', current_timestamp, 'test', 'P0', ?)",
+            [uuid.uuid4(), identifier],
+        )
+        raise RuntimeError("network lost")
+    assert connection.execute(
+        "SELECT metrics->>'requests_used' FROM job_runs WHERE job_run_id=?", [identifier]
+    ).fetchone() == ("1",)
     connection.close()
 
 

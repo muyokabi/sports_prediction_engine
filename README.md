@@ -158,7 +158,8 @@ uv run sports-engine run --date 2026-10-09 --days 3
 uv run sports-engine run --date tomorrow --offline
 ```
 
-The command prints an analysis run ID and report path. Open the HTML under `artifacts/reports/` and confirm every candidate against a real broker.
+The command prints an analysis run ID and report path. Open the HTML under the date-partitioned
+`artifacts/reports/YYYY/MM/DD/` tree and confirm every candidate against a real broker.
 
 ## Daily operator workflow
 
@@ -507,14 +508,14 @@ Development uses an explicitly configured replay season and labels its rows `rep
 
 ## Reports and artifacts
 
-Principal reports are written to `artifacts/reports/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation.
+Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation. New model and evaluation artifacts use the same `YYYY/MM/DD` partition beneath their category; registry paths and recursive discovery retain compatibility with older flat artifacts.
 
 | Path | Contents |
 |---|---|
-| `artifacts/models/` | Immutable models and manifests |
-| `artifacts/evaluation/` | Walk-forward and calibration evidence |
+| `artifacts/models/YYYY/MM/DD/` | Immutable version directories, models, calibrators, and hash-bearing manifests |
+| `artifacts/evaluation/YYYY/MM/DD/` | Walk-forward and calibration evidence |
 | `artifacts/backtests/` | Historical decision simulations |
-| `artifacts/reports/` | HTML analysis and acceptance evidence |
+| `artifacts/reports/YYYY/MM/DD/` | HTML analysis and acceptance evidence |
 | `data/parquet/` | Immutable analytical datasets |
 | `data/raw/` | Gzipped payloads and request metadata |
 | `data/quarantine/` | Rejected packages and investigation context |

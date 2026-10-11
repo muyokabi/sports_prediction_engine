@@ -65,9 +65,12 @@ def assess_score_model_applicability(
     in the model metrics. Merely being present in the fitted dictionary is not enough.
     """
     cutoff = training_cutoff or datetime.max.replace(tzinfo=UTC)
-    home = _team_evidence(connection, home_team_id, cutoff, half_life_days, model)
-    away = _team_evidence(connection, away_team_id, cutoff, half_life_days, model)
-    competition_id, competition_observations, competition_state = _competition_evidence(connection, fixture_id, cutoff)
+    lineage_available = bool(getattr(model, "fitted_fixture_ids", ()))
+    home = _team_evidence(home_team_id, cutoff, half_life_days, model, lineage_available=lineage_available)
+    away = _team_evidence(away_team_id, cutoff, half_life_days, model, lineage_available=lineage_available)
+    competition_id, competition_state = _competition_evidence(connection, fixture_id)
+    competition_counts = getattr(model, "fitted_competition_counts", {})
+    competition_observations = int(competition_counts.get(competition_id, 0)) if competition_id else 0
     fitted_competitions = set(getattr(model, "fitted_competitions", ()))
     competition_seen = competition_id is not None and competition_id in fitted_competitions
     policy = model_metrics.get("applicability_policy")
@@ -77,7 +80,10 @@ def assess_score_model_applicability(
     policy_version = str(policy_payload.get("version")) if policy_validated and policy_payload.get("version") else None
 
     reasons: list[str] = []
-    if not home.in_training_universe and not away.in_training_universe:
+    if not lineage_available:
+        state, level = "OUT_OF_DOMAIN", "OUT_OF_DOMAIN"
+        reasons.append("TRAINING_FIXTURE_LINEAGE_UNAVAILABLE")
+    elif not home.in_training_universe and not away.in_training_universe:
         state, level = "PRIOR_ONLY", "PRIOR_ONLY"
         reasons.extend(("UNSEEN_HOME_TEAM", "UNSEEN_AWAY_TEAM", "GLOBAL_PRIOR_SUBSTITUTION"))
     elif not home.in_training_universe:
@@ -137,22 +143,18 @@ def assess_score_model_applicability(
 
 
 def _team_evidence(
-    connection: duckdb.DuckDBPyConnection,
     team_id: str,
     cutoff: datetime,
     half_life_days: float,
     model: PoissonModel,
+    *,
+    lineage_available: bool,
 ) -> TeamEvidence:
-    rows = connection.execute(
-        "SELECT kickoff_utc, CAST(home_team_id AS VARCHAR)=? FROM fixtures_current "
-        "WHERE status_short IN ('FT','AET','PEN') AND kickoff_utc<=? "
-        "AND (CAST(home_team_id AS VARCHAR)=? OR CAST(away_team_id AS VARCHAR)=?) "
-        "ORDER BY kickoff_utc",
-        [team_id, cutoff, team_id, team_id],
-    ).fetchall()
+    history = getattr(model, "fitted_team_history", {})
+    rows = [row for row in history.get(team_id, ()) if row[0] <= cutoff] if lineage_available else []
     decay = log(2) / max(half_life_days, 1e-9)
     effective = sum(exp(-decay * max(0.0, (cutoff - row[0]).total_seconds() / 86_400)) for row in rows)
-    in_universe = team_id in model.fitted_teams
+    in_universe = lineage_available and team_id in model.fitted_teams
     # A transparent shrinkage proxy, not a posterior quantity or confidence interval.
     prior_fraction = 1.0 if not in_universe else model.regularization / (model.regularization + effective)
     return TeamEvidence(
@@ -166,9 +168,7 @@ def _team_evidence(
     )
 
 
-def _competition_evidence(
-    connection: duckdb.DuckDBPyConnection, fixture_id: str, cutoff: datetime
-) -> tuple[str | None, int, str]:
+def _competition_evidence(connection: duckdb.DuckDBPyConnection, fixture_id: str) -> tuple[str | None, str]:
     row = connection.execute(
         "SELECT f.competition_season_id, coalesce(d.universe_state, "
         "CASE WHEN cs.admitted THEN 'COLLECTED' ELSE 'DISCOVERED' END) "
@@ -178,11 +178,5 @@ def _competition_evidence(
         [fixture_id],
     ).fetchone()
     if row is None:
-        return None, 0, "OUT_OF_DOMAIN"
-    count = connection.execute(
-        "SELECT count(*) FROM fixtures_current WHERE competition_season_id=? "
-        "AND status_short IN ('FT','AET','PEN') AND kickoff_utc<=?",
-        [row[0], cutoff],
-    ).fetchone()
-    observations = int(count[0]) if count else 0
-    return str(row[0]), observations, str(row[1])
+        return None, "OUT_OF_DOMAIN"
+    return str(row[0]), str(row[1])

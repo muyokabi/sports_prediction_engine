@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from sports_engine.analysis.service import AnalysisService
+from sports_engine.core.exceptions import NoEligibleModelError
 from sports_engine.evaluation.backtest import BacktestService
 from sports_engine.models.registry import ModelRegistry, ModelRun
 from sports_engine.models.statistical.elo import EloModel
@@ -102,6 +103,9 @@ def test_champion_prediction_is_point_in_time_and_append_only(tmp_path: Path) ->
             created_at=observed,
         )
     )
+    with pytest.raises(ValueError, match="UNASSESSED.*not production-actionable"):
+        ModelRegistry(connection).promote("elo-test")
+    connection.execute("UPDATE model_runs SET evidence_state='PRODUCTION_ACTIONABLE' WHERE version='elo-test'")
     ModelRegistry(connection).promote("elo-test")
     service = PredictionService(connection, windows=[3], exponential_half_life=5.0, prediction_lead_hours=24)
     first = service.predict(kickoff.date(), ledger_mode="production", timezone="UTC", observed_at=observed)
@@ -129,6 +133,15 @@ def test_champion_prediction_is_point_in_time_and_append_only(tmp_path: Path) ->
     assert connection.execute(
         "SELECT count(*) FROM predictions WHERE CAST(fixture_id AS VARCHAR)=?", [fixture_id]
     ).fetchone() == (2,)
+    connection.execute("UPDATE model_runs SET evidence_state=NULL WHERE version='elo-test'")
+    with pytest.raises(NoEligibleModelError, match="No champion model"):
+        service.predict(
+            kickoff.date(),
+            ledger_mode="production",
+            timezone="UTC",
+            observed_at=observed + timedelta(minutes=2),
+        )
+    connection.execute("UPDATE model_runs SET evidence_state='PRODUCTION_ACTIONABLE' WHERE version='elo-test'")
     upsert_fixture(
         connection,
         FixtureRecord(
@@ -255,6 +268,7 @@ def test_analysis_persists_qualified_fundamental_core_prices(tmp_path: Path) -> 
         [result.analysis_run_id],
     ).fetchone() == (7, "PRICE_TARGET")
     document = result.report_path.read_text(encoding="utf-8")
+    assert result.report_path.parts[-4:-1] == ("2026", "06", "01")
     assert "MANUAL PRICE CONFIRMATION REQUIRED" in document
     assert "PRICE_TARGET" in document
     connection.close()

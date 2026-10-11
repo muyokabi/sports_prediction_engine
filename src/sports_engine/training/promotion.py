@@ -102,7 +102,7 @@ def _assess_candidate(
     evidence_state: str | None,
     assessed_at: datetime,
 ) -> PromotionAssessment:
-    report_path, report = _latest_report(evaluation_dir, model_type, dataset_hash)
+    report_path, report = _latest_report(evaluation_dir, model_type, dataset_hash, version)
     aggregate = _mapping(report.get("aggregate_metrics")) if report else {}
     evidence_policy = load_evidence_policies()[model_type]
     reasons: list[str] = []
@@ -395,17 +395,28 @@ def _persist_assessment(
         raise
 
 
-def _latest_report(evaluation_dir: Path, model_type: str, dataset_hash: str) -> tuple[Path | None, dict[str, Any]]:
+def _latest_report(
+    evaluation_dir: Path,
+    model_type: str,
+    dataset_hash: str,
+    candidate_version: str,
+) -> tuple[Path | None, dict[str, Any] | None]:
     reports: list[tuple[str, Path, dict[str, Any]]] = []
-    for path in evaluation_dir.glob(f"{model_type}-{dataset_hash[:12]}-*.json"):
+    # Recursive discovery supports date-partitioned reports while retaining
+    # compatibility with evaluation files written directly under this root.
+    for path in evaluation_dir.rglob(f"{model_type}-{dataset_hash[:12]}-*.json"):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if payload.get("model_type") == model_type and payload.get("dataset_hash") == dataset_hash:
+        if (
+            payload.get("model_type") == model_type
+            and payload.get("dataset_hash") == dataset_hash
+            and payload.get("candidate_version") == candidate_version
+        ):
             reports.append((str(payload.get("created_at", "")), path, payload))
     if not reports:
-        return None, {}
+        return None, None
     _, path, payload = max(reports, key=lambda item: item[0])
     return path, payload
 

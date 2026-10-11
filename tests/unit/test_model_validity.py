@@ -145,6 +145,12 @@ def test_competition_applicability_uses_exact_training_lineage_not_warehouse_pre
         home_advantage=0.1,
         fitted_teams=("home", "away"),
         fitted_competitions=("trained",),
+        fitted_fixture_ids=("trained-history-a", "trained-history-b"),
+        fitted_team_history={
+            "home": ((datetime(2026, 1, 1, tzinfo=UTC), True),),
+            "away": ((datetime(2026, 1, 2, tzinfo=UTC), False),),
+        },
+        fitted_competition_counts={"trained": 2},
         team_attack={"home": 0.1, "away": -0.1},
         team_defense={"home": -0.1, "away": 0.1},
     )
@@ -161,9 +167,85 @@ def test_competition_applicability_uses_exact_training_lineage_not_warehouse_pre
         probabilities={"home": 0.4, "draw": 0.3, "away": 0.3},
     )
 
-    assert assessment.competition_observations == 2
+    assert assessment.competition_observations == 0
     assert not assessment.competition_in_training_universe
     assert assessment.state == "UNSEEN_COMPETITION"
+    assert not assessment.actionability_qualified
+
+
+def test_applicability_counts_only_exact_model_training_rows() -> None:
+    connection = duckdb.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE competition_seasons (competition_season_id VARCHAR, admitted BOOLEAN); "
+        "CREATE TABLE competition_discoveries (competition_season_id VARCHAR, universe_state VARCHAR, "
+        "discovered_at TIMESTAMPTZ); "
+        "CREATE TABLE fixtures_current (fixture_id VARCHAR, competition_season_id VARCHAR, "
+        "home_team_id VARCHAR, away_team_id VARCHAR, status_short VARCHAR, kickoff_utc TIMESTAMPTZ)"
+    )
+    connection.execute("INSERT INTO competition_seasons VALUES ('trained', true)")
+    connection.execute("INSERT INTO competition_discoveries VALUES ('trained', 'ACTIONABLE', '2026-01-01')")
+    connection.execute(
+        "INSERT INTO fixtures_current VALUES "
+        "('warehouse-a', 'trained', 'home', 'other-a', 'FT', '2026-01-01'), "
+        "('warehouse-b', 'trained', 'other-b', 'away', 'FT', '2026-01-02'), "
+        "('warehouse-c', 'trained', 'home', 'away', 'FT', '2026-01-03'), "
+        "('target', 'trained', 'home', 'away', 'NS', '2026-03-01')"
+    )
+    model = PoissonModel(
+        fitted_teams=("home", "away"),
+        fitted_competitions=("trained",),
+        fitted_fixture_ids=("model-a", "model-b"),
+        fitted_team_history={
+            "home": ((datetime(2026, 1, 1, tzinfo=UTC), True),),
+            "away": ((datetime(2026, 1, 2, tzinfo=UTC), False),),
+        },
+        fitted_competition_counts={"trained": 2},
+    )
+    assessment = assess_score_model_applicability(
+        connection,
+        fixture_id="target",
+        home_team_id="home",
+        away_team_id="away",
+        model=model,
+        model_type="poisson",
+        model_metrics={"applicability_policy": {"validated": True, "minimum_effective_matches": 2, "version": "v1"}},
+        training_cutoff=datetime(2026, 2, 1, tzinfo=UTC),
+        half_life_days=365,
+        probabilities={"home": 0.4, "draw": 0.3, "away": 0.3},
+    )
+    assert assessment.home.observations == assessment.away.observations == 1
+    assert assessment.competition_observations == 2
+    assert assessment.state == "LOW_TEAM_HISTORY"
+    assert not assessment.actionability_qualified
+
+
+def test_old_score_artifact_without_fixture_lineage_fails_closed() -> None:
+    connection = duckdb.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE competition_seasons (competition_season_id VARCHAR, admitted BOOLEAN); "
+        "CREATE TABLE competition_discoveries (competition_season_id VARCHAR, universe_state VARCHAR, "
+        "discovered_at TIMESTAMPTZ); "
+        "CREATE TABLE fixtures_current (fixture_id VARCHAR, competition_season_id VARCHAR, "
+        "home_team_id VARCHAR, away_team_id VARCHAR, status_short VARCHAR, kickoff_utc TIMESTAMPTZ); "
+        "INSERT INTO competition_seasons VALUES ('trained', true); "
+        "INSERT INTO competition_discoveries VALUES ('trained', 'ACTIONABLE', '2026-01-01'); "
+        "INSERT INTO fixtures_current VALUES ('target', 'trained', 'home', 'away', 'NS', '2026-03-01')"
+    )
+    model = PoissonModel(fitted_teams=("home", "away"), fitted_competitions=("trained",))
+    assessment = assess_score_model_applicability(
+        connection,
+        fixture_id="target",
+        home_team_id="home",
+        away_team_id="away",
+        model=model,
+        model_type="poisson",
+        model_metrics={"applicability_policy": {"validated": True, "minimum_effective_matches": 0, "version": "v1"}},
+        training_cutoff=datetime(2026, 2, 1, tzinfo=UTC),
+        half_life_days=365,
+        probabilities={"home": 0.4, "draw": 0.3, "away": 0.3},
+    )
+    assert assessment.state == "OUT_OF_DOMAIN"
+    assert "TRAINING_FIXTURE_LINEAGE_UNAVAILABLE" in assessment.reasons
     assert not assessment.actionability_qualified
 
 
@@ -192,6 +274,28 @@ def test_legacy_prediction_path_never_assumes_missing_lineage_is_in_domain() -> 
     )
     assert state == "OUT_OF_DOMAIN"
     assert reasons == ("TRAINING_LINEAGE_UNAVAILABLE",)
+
+
+def test_legacy_portfolio_exposure_deduplicates_repricing_by_fixture() -> None:
+    connection = duckdb.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE prediction_decisions (fixture_id VARCHAR, state VARCHAR, "
+        "decision_timestamp TIMESTAMPTZ, stake_fraction DOUBLE)"
+    )
+    connection.execute(
+        "INSERT INTO prediction_decisions VALUES "
+        "('fixture-a', 'BET_IF_PRICE_AVAILABLE', '2026-10-11 08:00:00+00', 0.01), "
+        "('fixture-a', 'BET_IF_PRICE_AVAILABLE', '2026-10-11 09:00:00+00', 0.01), "
+        "('fixture-b', 'BET_IF_PRICE_AVAILABLE', '2026-10-11 08:00:00+00', 0.02), "
+        "('fixture-c', 'NO_BET', '2026-10-11 08:00:00+00', NULL)"
+    )
+    service = PredictionService(connection, windows=[3], exponential_half_life=5, prediction_lead_hours=24)
+    exposure, recommendations = service._current_portfolio_exposure(
+        datetime(2026, 10, 11, 10, tzinfo=UTC),
+        "fixture-a",
+    )
+    assert exposure == pytest.approx(0.02)
+    assert recommendations == 1
 
 
 def test_ml_training_domain_uses_only_chronological_training_partition(tmp_path: Path) -> None:

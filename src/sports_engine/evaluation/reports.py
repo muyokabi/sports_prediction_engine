@@ -10,6 +10,7 @@ import duckdb
 import numpy as np
 import polars as pl
 
+from sports_engine.core.paths import dated_artifact_directory
 from sports_engine.evaluation.bookmaker_baseline import bookmaker_baseline_metrics
 from sports_engine.evaluation.metrics import probability_metrics
 from sports_engine.evaluation.uncertainty import (
@@ -17,6 +18,7 @@ from sports_engine.evaluation.uncertainty import (
     paired_metric_difference,
     per_fixture_loss,
 )
+from sports_engine.models.calibration.multiclass import MulticlassProbabilityCalibrator
 from sports_engine.models.ml.catboost import CatBoostProbabilityModel
 from sports_engine.models.ml.lightgbm import LightGBMProbabilityModel
 from sports_engine.models.ml.logistic import LogisticProbabilityModel
@@ -26,7 +28,7 @@ from sports_engine.models.statistical.elo import EloModel
 from sports_engine.models.statistical.poisson import PoissonModel
 from sports_engine.training.dataset_builder import load_training_dataset, prediction_times
 from sports_engine.training.evidence import load_evidence_policies
-from sports_engine.training.trainer import NON_FEATURE_COLUMNS, TARGET_LABELS
+from sports_engine.training.trainer import TARGET_LABELS
 from sports_engine.training.walk_forward import walk_forward_splits
 
 
@@ -39,6 +41,14 @@ class EvaluationReport:
     aggregate_metrics: dict[str, Any]
     created_at: datetime
     path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationCandidate:
+    version: str
+    hyperparameters: dict[str, Any]
+    calibration_method: str | None
+    feature_columns: tuple[str, ...]
 
 
 class WalkForwardEvaluator:
@@ -74,6 +84,7 @@ class WalkForwardEvaluator:
     ) -> EvaluationReport:
         validate_model_type(model_type)
         dataset = load_training_dataset(self.connection, dataset_name)
+        candidate = self._candidate(model_type, dataset.dataset_hash)
         times = prediction_times(dataset)
         distinct = len(set(times))
         minimum = minimum_train_periods or max(3, int(distinct * 0.6))
@@ -90,7 +101,7 @@ class WalkForwardEvaluator:
         all_test_indexes: list[np.ndarray] = []
         fold_metrics: list[dict[str, Any]] = []
         for fold in folds:
-            probabilities = self._fit_predict(model_type, dataset.frame, fold.train, fold.test)
+            probabilities = self._fit_predict(model_type, dataset.frame, fold.train, fold.test, candidate)
             observed = targets[fold.test]
             metrics = probability_metrics(observed, probabilities)
             fold_metrics.append(metrics)
@@ -145,6 +156,10 @@ class WalkForwardEvaluator:
         created_at = datetime.now(UTC)
         payload = {
             "model_type": model_type,
+            "candidate_version": candidate.version,
+            "candidate_hyperparameters": candidate.hyperparameters,
+            "candidate_calibration_method": candidate.calibration_method,
+            "candidate_feature_columns": list(candidate.feature_columns),
             "dataset_id": dataset.dataset_id,
             "dataset_hash": dataset.dataset_hash,
             "fold_metrics": fold_metrics,
@@ -155,8 +170,9 @@ class WalkForwardEvaluator:
             "rolling_train_periods": rolling_train_periods,
         }
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        path = self.output_dir / f"{model_type}-{dataset.dataset_hash[:12]}-{digest}.json"
+        output_dir = dated_artifact_directory(self.output_dir, created_at)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{model_type}-{dataset.dataset_hash[:12]}-{digest}.json"
         if not path.exists():
             path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         self._persist_probability_scope_validations(model_type, dataset.dataset_hash, aggregate, path, created_at)
@@ -326,7 +342,74 @@ class WalkForwardEvaluator:
                     ],
                 )
 
-    def _fit_predict(self, model_type: str, frame: pl.DataFrame, train: np.ndarray, test: np.ndarray) -> np.ndarray:
+    def _candidate(self, model_type: str, dataset_hash: str) -> EvaluationCandidate:
+        row = self.connection.execute(
+            "SELECT version, hyperparameters, calibration_method, artifact_path FROM model_runs "
+            "WHERE model_type=? AND training_dataset_hash=? AND status IN ('candidate','champion') "
+            "ORDER BY created_at DESC LIMIT 1",
+            [model_type, dataset_hash],
+        ).fetchone()
+        if not row:
+            raise ValueError(f"No trained {model_type} candidate is registered for dataset {dataset_hash}")
+        hyperparameters = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+        manifest_path = Path(str(row[3])).with_suffix(Path(str(row[3])).suffix + ".json")
+        if not manifest_path.is_file():
+            raise ValueError(f"Candidate manifest is missing: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        columns = manifest.get("feature_columns", [])
+        if not isinstance(columns, list) or any(not isinstance(value, str) for value in columns):
+            raise ValueError(f"Candidate feature manifest is invalid: {manifest_path}")
+        if model_type not in {"elo", "poisson", "dixon-coles"} and not columns:
+            raise ValueError(f"Candidate feature manifest is empty: {manifest_path}")
+        return EvaluationCandidate(str(row[0]), hyperparameters, str(row[2]) if row[2] else None, tuple(columns))
+
+    def _fit_predict(
+        self,
+        model_type: str,
+        frame: pl.DataFrame,
+        train: np.ndarray,
+        test: np.ndarray,
+        candidate: EvaluationCandidate,
+    ) -> np.ndarray:
+        fit = train
+        calibration = np.asarray([], dtype=int)
+        if candidate.calibration_method:
+            timestamps = frame["prediction_timestamp"].to_list()
+            periods = sorted({timestamps[int(index)] for index in train})
+            calibration_periods = max(1, len(periods) // 5)
+            if calibration_periods >= len(periods):
+                raise ValueError("Walk-forward fold has insufficient history for calibration")
+            calibration_times = set(periods[-calibration_periods:])
+            fit = np.asarray([index for index in train if timestamps[int(index)] not in calibration_times])
+            calibration = np.asarray([index for index in train if timestamps[int(index)] in calibration_times])
+
+        probabilities, calibration_probabilities = self._fit_predict_raw(
+            model_type,
+            frame,
+            fit,
+            test,
+            calibration,
+            candidate,
+        )
+        if candidate.calibration_method:
+            targets = np.asarray([TARGET_LABELS[value] for value in frame["target_result"]])
+            calibrator = MulticlassProbabilityCalibrator(
+                candidate.calibration_method,
+                random_seed=self.random_seed,
+            ).fit(calibration_probabilities, targets[calibration])
+            return calibrator.transform(probabilities)
+        return probabilities
+
+    def _fit_predict_raw(
+        self,
+        model_type: str,
+        frame: pl.DataFrame,
+        train: np.ndarray,
+        test: np.ndarray,
+        calibration: np.ndarray,
+        candidate: EvaluationCandidate,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        hyperparameters = candidate.hyperparameters
         if model_type in {"elo", "poisson", "dixon-coles"}:
             matches = list(
                 zip(
@@ -339,36 +422,67 @@ class WalkForwardEvaluator:
             )
             model: Any
             if model_type == "elo":
-                model = EloModel()
+                model = EloModel(
+                    k_factor=float(hyperparameters.get("k_factor", 20.0)),
+                    home_advantage=float(hyperparameters.get("home_advantage", 60.0)),
+                )
             elif model_type == "poisson":
-                model = PoissonModel()
+                model = PoissonModel(
+                    maximum_goals=int(hyperparameters.get("maximum_goals", 10)),
+                    regularization=float(hyperparameters.get("regularization", 10.0)),
+                )
             else:
-                model = DixonColesModel()
+                model = DixonColesModel(
+                    maximum_goals=int(hyperparameters.get("maximum_goals", 10)),
+                    regularization=float(hyperparameters.get("regularization", 10.0)),
+                )
             if model_type in {"poisson", "dixon-coles"}:
                 timestamps = frame["prediction_timestamp"].to_list()
                 model.fit_timed(
                     [(*matches[index], timestamps[index]) for index in train],
-                    half_life_days=self.time_decay_half_life_days,
+                    half_life_days=float(
+                        hyperparameters.get("time_decay_half_life_days", self.time_decay_half_life_days)
+                    ),
                 )
             else:
                 model.fit([matches[index] for index in train])
-            return model.predict_proba([(matches[index][0], matches[index][1]) for index in test])
-        columns = [
-            name
-            for name, dtype in frame.schema.items()
-            if name not in NON_FEATURE_COLUMNS and (dtype.is_numeric() or dtype == pl.Boolean)
-        ]
+            predictions = model.predict_proba([(matches[index][0], matches[index][1]) for index in test])
+            calibration_predictions = model.predict_proba(
+                [(matches[index][0], matches[index][1]) for index in calibration]
+            )
+            return predictions, calibration_predictions
+        columns = list(candidate.feature_columns)
+        missing = sorted(set(columns) - set(frame.columns))
+        if missing:
+            raise ValueError(f"Candidate evaluation features are absent from the dataset: {', '.join(missing)}")
         matrix = frame.select(columns).cast(pl.Float64).to_numpy()
         targets = np.asarray([TARGET_LABELS[value] for value in frame["target_result"]])
         if model_type == "logistic":
-            model = LogisticProbabilityModel(random_seed=self.random_seed)
+            model = LogisticProbabilityModel(
+                random_seed=self.random_seed,
+                c=float(hyperparameters.get("C", 1.0)),
+            )
         elif model_type == "catboost":
-            model = CatBoostProbabilityModel(random_seed=self.random_seed, threads=self.cpu_threads, iterations=100)
+            model = CatBoostProbabilityModel(
+                random_seed=self.random_seed,
+                threads=self.cpu_threads,
+                iterations=int(hyperparameters.get("iterations", 300)),
+            )
         else:
-            model = LightGBMProbabilityModel(random_seed=self.random_seed, threads=self.cpu_threads, n_estimators=100)
+            model = LightGBMProbabilityModel(
+                random_seed=self.random_seed,
+                threads=self.cpu_threads,
+                n_estimators=int(hyperparameters.get("n_estimators", 300)),
+            )
         model.fit(matrix[train], targets[train])
-        probabilities = np.asarray(model.predict_proba(matrix[test]))
-        ordered = np.zeros((len(test), 3))
+        return self._ordered_probabilities(model, matrix[test]), self._ordered_probabilities(model, matrix[calibration])
+
+    @staticmethod
+    def _ordered_probabilities(model: Any, matrix: np.ndarray) -> np.ndarray:
+        if not len(matrix):
+            return np.empty((0, 3), dtype=float)
+        probabilities = np.asarray(model.predict_proba(matrix))
+        ordered = np.zeros((len(matrix), 3))
         for source, target in enumerate(np.asarray(model.estimator.classes_, dtype=int)):
             ordered[:, target] = probabilities[:, source]
         return ordered

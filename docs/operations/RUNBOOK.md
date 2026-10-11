@@ -68,6 +68,15 @@ Alert categories are `PROVIDER_UNAVAILABLE`, `AUTHENTICATION_FAILURE`, `QUOTA_EX
 
 Predictions are probability records. `prediction_decisions` separately records the governance state, machine-readable reasons, exact reference observation, expected value, minimum acceptable odds, bounded stake fraction, and fixture-level applicability derived from the exact training domain. Missing training lineage is `OUT_OF_DOMAIN`, never implicitly applicable. Reference age remains visible but is not an arbitrary veto. Missing/invalid/post-kickoff evidence, weak applicability, absent calibration, unvalidated uncertainty or margin, non-positive expected value, or exposure breach produces `NO_BET`. Bet placement is manual; no bookmaker execution exists.
 
+Generated artifacts are partitioned by creation date. Daily HTML is under
+`artifacts/reports/YYYY/MM/DD/`; model versions are under
+`artifacts/models/YYYY/MM/DD/<version>/`; walk-forward evidence is under
+`artifacts/evaluation/YYYY/MM/DD/`. The model registry stores the exact path, and evaluation
+discovery is recursive, so historical flat-layout artifacts remain valid and must not be moved by
+hand. New model and calibrator manifests include SHA-256 digests that are verified before loading;
+pickle files still require trusted local provenance and must never be accepted from an untrusted
+source.
+
 `SHADOW_ACTIONABLE` means eligible for prospective paper tracking only. The default bootstrap policy accepts fresh
 `MATCH_ODDS`, `BTTS`, and `TOTAL_GOALS` references from structurally fitted, actionable competitions, then caps output at
 one row per fixture and ten per run. It does not imply a validated robust edge. Confirm that `robust_estimated_edge` and

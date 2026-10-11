@@ -75,8 +75,9 @@ class ModelRegistry:
         if not row:
             raise ValueError(f"Candidate model {version!r} does not exist")
         candidate_metrics = self._metrics(row[0])
-        if row[1] is not None and row[1] != "PRODUCTION_ACTIONABLE":
-            raise ValueError(f"Candidate evidence state {row[1]} is not production-actionable")
+        if row[1] != "PRODUCTION_ACTIONABLE":
+            state = row[1] if row[1] is not None else "UNASSESSED"
+            raise ValueError(f"Candidate evidence state {state} is not production-actionable")
         baseline = candidate_metrics.get("bookmaker_baseline")
         if isinstance(baseline, dict) and not self._is_better(candidate_metrics, baseline):
             raise ValueError("Candidate does not outperform the bookmaker baseline on probability metrics")

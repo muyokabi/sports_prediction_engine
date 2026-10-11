@@ -37,9 +37,19 @@ def job_run(
         "VALUES (?, ?, ?, 'running', ?)",
         [job_run_id, job_name, started_at, application_mode],
     )
+
+    def refresh_request_telemetry() -> None:
+        """Derive logical billable calls from the durable request ledger on every exit path."""
+        row = connection.execute(
+            "SELECT count(*) FROM api_request_log WHERE CAST(job_run_id AS VARCHAR)=? AND endpoint<>'/status'",
+            [job_run_id],
+        ).fetchone()
+        summary.requests_used = max(summary.requests_used, int(row[0]) if row else 0)
+
     try:
         yield job_run_id
     except BaseException as exc:
+        refresh_request_telemetry()
         category = classify_failure(exc, job_name)
         connection.execute(
             "UPDATE job_runs SET finished_at=?, status='failed', metrics=?, error_message=?, "
@@ -55,6 +65,7 @@ def job_run(
         logger.error("job_failed job=%s category=%s error=%s", job_name, category.value, exc)
         raise
     else:
+        refresh_request_telemetry()
         connection.execute(
             "UPDATE job_runs SET finished_at=?, status='succeeded', metrics=? WHERE job_run_id=?",
             [datetime.now(UTC), json.dumps(asdict(summary)), job_run_id],

@@ -1,5 +1,7 @@
 # API-Football Reference-Odds Semantics Acceptance Report
 
+> Historical evidence only. The current warehouse has zero odds observations. See `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+
 **Acceptance date:** 2026-10-08  
 **Production ledger:** DuckDB schema 26  
 **Principal live analysis:** `138c0458-db2a-42b3-8912-e1e21380a77c`  

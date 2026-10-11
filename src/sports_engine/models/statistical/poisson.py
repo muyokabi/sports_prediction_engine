@@ -29,6 +29,9 @@ class PoissonModel:
     # Older artifacts do not carry this lineage and must therefore fail closed
     # when fixture-level competition applicability is assessed.
     fitted_competitions: tuple[str, ...] = ()
+    fitted_fixture_ids: tuple[str, ...] = ()
+    fitted_team_history: dict[str, tuple[tuple[datetime, bool], ...]] = field(default_factory=dict)
+    fitted_competition_counts: dict[str, int] = field(default_factory=dict)
 
     def fit(self, matches: list[tuple[str, str, int, int]]) -> Self:
         return self._fit(matches, np.ones(len(matches), dtype=float))
@@ -172,6 +175,7 @@ class PoissonModel:
             "regularization": self.regularization,
             "teams": len(self.fitted_teams),
             "competitions": len(getattr(self, "fitted_competitions", ())),
+            "fixtures": len(getattr(self, "fitted_fixture_ids", ())),
             "intercept": self.intercept,
             "home_advantage": self.home_advantage,
         }
