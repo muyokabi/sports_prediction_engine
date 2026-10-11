@@ -36,6 +36,137 @@ class CoverageAuditResult:
     next_candidate_index: int
 
 
+@dataclass(frozen=True, slots=True)
+class SeasonCatalogResult:
+    """Selected provider seasons registered from one API-Football catalog call."""
+
+    items: tuple[CoverageAuditItem, ...]
+    provider_seasons: tuple[int, ...]
+    competition_seasons_registered: int
+
+
+class SeasonCatalogService:
+    """Register selected current or historical league-seasons quota-efficiently.
+
+    API-Football's leagues catalog already contains every season and its
+    season-specific coverage.  Fetch it once and filter locally instead of
+    spending one request per league-season.
+    """
+
+    def __init__(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        provider: SportsDataProvider,
+        raw_path_resolver: Callable[[str, str | None], str] | None = None,
+    ) -> None:
+        self.connection = connection
+        self.provider = provider
+        self.raw_path_resolver = raw_path_resolver or (
+            lambda purpose, job_run_id: latest_raw_path(connection, purpose, job_run_id)
+        )
+
+    def run(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        current: bool = False,
+        exact_season: int | None = None,
+        past_seasons: int | None = None,
+        job_run_id: str | None = None,
+    ) -> SeasonCatalogResult:
+        selectors = sum((current, exact_season is not None, past_seasons is not None))
+        if selectors != 1:
+            raise ValueError("Select exactly one of current, exact_season, or past_seasons")
+        if past_seasons is not None and past_seasons < 1:
+            raise ValueError("past_seasons must be positive")
+
+        mode = "current" if current else "historical"
+        purpose = f"selected_season_catalog:{mode}"
+        rows = self.provider.get(
+            Endpoint.LEAGUES,
+            {"current": "true" if current else "false"},
+            purpose=purpose,
+            priority=Priority.P4,
+            job_run_id=job_run_id,
+        )
+        raw_path = self.raw_path_resolver(purpose, job_run_id)
+        catalog: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            league_id = (row.get("league") or {}).get("id")
+            if league_id is not None:
+                catalog[int(league_id)] = row
+        items: list[CoverageAuditItem] = []
+        registered = 0
+        selected_years: set[int] = set()
+        for candidate in candidates:
+            provider_id = int(candidate["provider_id"])
+            payload = catalog.get(provider_id)
+            if payload is None:
+                items.append(CoverageAuditItem(provider_id, str(candidate["name"]), None, False, "league not returned"))
+                continue
+            league = payload.get("league") or {}
+            seasons = list(payload.get("seasons") or [])
+            if current:
+                selected = [season for season in seasons if season.get("current")]
+            elif exact_season is not None:
+                selected = [season for season in seasons if season.get("year") == exact_season]
+            else:
+                completed = [season for season in seasons if not season.get("current")]
+                selected = sorted(completed, key=lambda season: int(season["year"]), reverse=True)[:past_seasons]
+            if not selected:
+                requested = "current season" if current else exact_season or f"last {past_seasons} completed seasons"
+                items.append(
+                    CoverageAuditItem(
+                        provider_id,
+                        str(candidate["name"]),
+                        None,
+                        False,
+                        f"{requested} not returned",
+                    )
+                )
+                continue
+            for season in selected:
+                decision = evaluate_season(season)
+                fixture_coverage = decision.profile.fixtures
+                replay_eligible = not current and all(
+                    (
+                        fixture_coverage.events,
+                        fixture_coverage.lineups,
+                        fixture_coverage.statistics_fixtures,
+                        fixture_coverage.statistics_players,
+                    )
+                )
+                reason = "mandatory coverage present" if decision.accepted else ", ".join(decision.reasons)
+                if replay_eligible and not decision.accepted:
+                    reason = f"replay-only match data eligible; production gate rejected: {reason}"
+                with transaction(self.connection):
+                    upsert_competition_season(
+                        self.connection,
+                        league,
+                        season,
+                        admitted=decision.accepted,
+                        reason=reason,
+                        priority=candidate.get("priority"),
+                        source_raw_path=raw_path,
+                        ledger_mode="production" if current else "replay",
+                        replay_eligible=replay_eligible,
+                    )
+                year = int(season["year"])
+                selected_years.add(year)
+                registered += 1
+                items.append(
+                    CoverageAuditItem(
+                        provider_id,
+                        str(candidate["name"]),
+                        year,
+                        decision.accepted,
+                        reason,
+                        replay_eligible,
+                    )
+                )
+        return SeasonCatalogResult(tuple(items), tuple(sorted(selected_years, reverse=True)), registered)
+
+
 class CoverageAuditService:
     checkpoint_key = "football.coverage_audit.next_candidate_index"
 

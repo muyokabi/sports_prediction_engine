@@ -130,7 +130,7 @@ The canonical write path is `immutable raw response -> validated envelope -> nor
 ### Install
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/muyokabi/sports_prediction_engine.git
 Set-Location sports_prediction_engine
 uv sync --all-groups
 Copy-Item .env.example .env
@@ -195,8 +195,13 @@ uv run sports-engine models reliability --json
 # keep the request cap explicit and run one season at a time
 uv run sports-engine football historical-backfill --season 2023 --max-requests 250
 
-# Register/fetch a season and backfill its completed fixtures in one resumable run
-uv run sports-engine football fetch-backfill --season 2023 --max-requests 250
+# Register/fetch the five latest completed seasons for every selected league,
+# then backfill completed fixtures within an explicit request budget
+uv run sports-engine football fetch-backfill --past-seasons 5 --max-requests 5000
+
+# After the historical backfill has produced ML-eligible completed fixtures,
+# full-refit and evaluate every supported model on current + replay history
+uv run sports-engine models train-historical
 
 # Before upgrades or major maintenance
 $backup = 'D:\sports-engine-backups\YYYY-MM-DD'
@@ -269,6 +274,7 @@ uv run sports-engine football backfill
 # Combined coverage + team/fixture fetch + detailed completed-fixture backfill
 uv run sports-engine football fetch-backfill
 uv run sports-engine football fetch-backfill --season 2023 --max-requests 250
+uv run sports-engine football fetch-backfill --past-seasons 5 --max-requests 5000
 uv run sports-engine football fetch-backfill --season 2023 --no-coverage
 uv run sports-engine football fetch-backfill --season 2023 --no-bootstrap
 
@@ -289,20 +295,35 @@ uv run sports-engine football quality-soak --leagues 3 --fixtures-per-league 2
 ```
 
 `football fetch-backfill` is the one-command seasonal ingestion workflow. With no
-`--season`, it targets the configured current ledger (production in the default
-configuration). Supplying `--season YYYY` safely targets the replay ledger so
-historical data cannot expand the live production fixture universe. Its flags are:
+historical selector, it targets the configured current ledger (production in the
+default configuration). Supplying `--season YYYY` or `--past-seasons N` safely
+targets the replay ledger so historical data cannot expand the live production
+fixture universe. The multi-season path reads API-Football's `/leagues` catalog
+once, selects completed seasons independently for each configured league, applies
+that season's coverage flags, and then fetches teams and fixtures for every
+qualified league-season. Its flags are:
 
 | Flag | Default | Meaning |
 |---|---:|---|
 | `--season YYYY` | current | Fetch and enrich one historical season in the replay ledger |
+| `--past-seasons N` | unset | Fetch the latest 1–10 completed seasons for every selected league; cannot be combined with `--season` |
 | `--max-requests N` | `1000` | Cap detailed enrichment requests to 1–5000; coverage and skeleton fetching are separate |
 | `--coverage` / `--no-coverage` | `--coverage` | Run or skip competition coverage qualification |
 | `--bootstrap` / `--no-bootstrap` | `--bootstrap` | Run or skip team and fixture-skeleton fetching |
 
-The command is checkpointed and idempotent. Rerun it after a quota stop; use the
-skip flags only when that phase already completed or when intentionally resuming
-a later phase.
+The command is checkpointed and idempotent. Rerun the identical command after a
+quota stop or a transient network/DNS failure; completed league-season work is
+not downloaded again, and a fixture-stage interruption resumes at that stage.
+Use the skip flags only when that phase already completed or when intentionally
+resuming a later phase.
+
+API-Football identifies a season by its starting year, so the command does not
+derive five years by subtracting from the calendar year. It uses each league's
+returned season list and excludes the entry marked `current`. Historical fixture,
+event, lineup, team-statistic, and player-statistic data can be backfilled when
+the season advertises that coverage. Historical pre-match odds cannot be
+reconstructed: API-Football retains `/odds` observations for only seven days, so
+the daily workflow must collect and preserve them prospectively.
 
 ### Features, training, and calibration
 
@@ -317,6 +338,14 @@ uv run sports-engine train --model logistic
 uv run sports-engine train --model catboost
 uv run sports-engine train --model lightgbm
 
+# Build one current + replay dataset, then full-refit and evaluate all six models
+uv run sports-engine models train-historical
+
+# Restrict the historical run to one model or use a rolling evaluation window
+uv run sports-engine models train-historical --model lightgbm
+uv run sports-engine models train-historical --rolling-periods 100
+uv run sports-engine models train-historical --no-assess-promotions
+
 # Dataset selection and validation-holdout calibration
 uv run sports-engine train --model logistic --dataset football-training
 uv run sports-engine train --model logistic --calibration platt
@@ -327,6 +356,27 @@ uv run sports-engine train --model lightgbm --mode warm_start --parent <model-ve
 ```
 
 `--mode` accepts `full_refit` or `warm_start`. Warm-start training requires the immutable parent version.
+
+`models train-historical` is the dedicated post-backfill training workflow. It
+requires ML-eligible completed fixtures in the replay ledger, builds one
+point-in-time feature dataset from the current target ledger plus replay history,
+and forces immutable full-refit candidates rather than waiting for the daily
+retraining schedule. All six model families are trained by default. Each
+successful candidate is walk-forward evaluated, ML models receive Platt
+calibration, and the normal fail-closed promotion assessment runs after the
+suite. A failed model is reported without discarding successful candidates from
+the same run.
+
+| Flag | Default | Meaning |
+|---|---:|---|
+| `--model TYPE` | all models | Train only `elo`, `poisson`, `dixon-coles`, `logistic`, `catboost`, or `lightgbm` |
+| `--dataset-name NAME` | timestamped | Set the immutable feature-dataset name |
+| `--rolling-periods N` | expanding | Use the latest N periods for each walk-forward training window |
+| `--assess-promotions` / `--no-assess-promotions` | `--assess-promotions` | Run or skip audited promotion assessment after evaluation |
+
+Training is local and consumes no API quota. It does not repair incomplete
+historical fixtures: rerun `football fetch-backfill` first if the command reports
+that no ML-eligible replay fixtures are available.
 
 ### Evaluation, backtesting, and model governance
 

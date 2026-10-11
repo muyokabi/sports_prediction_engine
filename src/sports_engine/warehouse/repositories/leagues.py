@@ -107,9 +107,11 @@ def admitted_seasons(
     ).fetchall()
 
 
-def mark_provider_season_inaccessible(connection: duckdb.DuckDBPyConnection, provider_season: int, reason: str) -> None:
+def mark_provider_season_inaccessible(
+    connection: duckdb.DuckDBPyConnection, competition_season_id: str, reason: str
+) -> None:
     connection.execute(
         "UPDATE competition_seasons SET provider_accessible=false, admitted=false, "
-        "access_reason=?, admission_reason=? WHERE provider_season=? AND admitted",
-        [reason, f"provider access blocked: {reason}", provider_season],
+        "access_reason=?, admission_reason=? WHERE competition_season_id=?",
+        [reason, f"provider access blocked: {reason}", competition_season_id],
     )

@@ -69,11 +69,26 @@ class BackfillPlanner:
         ledger_mode: str,
         estimated_mandatory_requests: int = 0,
         provider_season: int | None = None,
+        provider_seasons: tuple[int, ...] | None = None,
     ) -> BackfillPlan:
+        if provider_season is not None and provider_seasons is not None:
+            raise ValueError("Use provider_season or provider_seasons, not both")
         request_budget = self.quota_budget.backfill_budget(
             estimated_mandatory_requests,
             self.maximum_requests,
         )
+        season_clause = ""
+        parameters: list[Any] = [ledger_mode]
+        if provider_season is not None:
+            season_clause = "AND cs.provider_season=? "
+            parameters.append(provider_season)
+        elif provider_seasons is not None:
+            if not provider_seasons:
+                return BackfillPlan((), request_budget, 0)
+            placeholders = ",".join("?" for _ in provider_seasons)
+            season_clause = f"AND cs.provider_season IN ({placeholders}) "
+            parameters.extend(provider_seasons)
+        parameters.extend((self.repair_attempt_limit, datetime.now(UTC)))
         rows = self.connection.execute(
             "SELECT f.provider_fixture_id FROM fixtures_current f "
             "JOIN competition_seasons cs USING (competition_season_id) "
@@ -81,11 +96,11 @@ class BackfillPlanner:
             "LEFT JOIN fixture_repair_state r USING (fixture_id) "
             "WHERE cs.ledger_mode=? AND f.status_short IN ('FT', 'AET', 'PEN') "
             "AND coalesce(q.eligibility, 'PENDING_REPAIR') <> 'ML_ELIGIBLE' "
-            "AND (? IS NULL OR cs.provider_season=?) "
+            f"{season_clause}"
             "AND coalesce(r.attempt_count, 0) < ? "
             "AND (r.next_retry_after IS NULL OR r.next_retry_after <= ?) "
             "ORDER BY coalesce(r.attempt_count, 0), f.kickoff_utc DESC",
-            [ledger_mode, provider_season, provider_season, self.repair_attempt_limit, datetime.now(UTC)],
+            parameters,
         ).fetchall()
         candidate_count = len(rows)
         # One batched /fixtures call covers up to twenty IDs, but completed

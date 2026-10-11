@@ -120,3 +120,47 @@ def test_backfill_can_be_restricted_to_one_registered_season(tmp_path: Path) -> 
     assert plan.candidate_count == 1
     assert plan.fixture_ids == (104,)
     connection.close()
+
+
+def test_backfill_can_be_restricted_to_multiple_registered_seasons(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "multi-season-filter.duckdb")
+    migrate(connection)
+    for year, provider_id in ((2022, 102), (2023, 103), (2024, 104)):
+        season_id = upsert_competition_season(
+            connection,
+            {"id": 39, "name": "League"},
+            {"year": year, "current": False, "coverage": {}},
+            admitted=False,
+            replay_eligible=True,
+            ledger_mode="replay",
+            reason="replay-only",
+            priority=1,
+        )
+        upsert_fixture(
+            connection,
+            normalize_fixture(
+                {
+                    "fixture": {
+                        "id": provider_id,
+                        "date": f"{year}-05-01T12:00:00+00:00",
+                        "status": {"short": "FT", "long": "Finished", "elapsed": 90},
+                    },
+                    "league": {"id": 39, "season": year, "round": "Round 1"},
+                    "teams": {"home": {"id": 10, "name": "Home"}, "away": {"id": 11, "name": "Away"}},
+                    "goals": {"home": 1, "away": 0},
+                }
+            ),
+            season_id,
+            f"fixture-{year}.json.gz",
+        )
+    now = datetime.now(UTC)
+    budget = QuotaBudget(
+        QuotaPolicy(minimum_daily_reserve=10, minimum_minute_reserve=2),
+        QuotaObservation(7_500, 100, 300, 298, now),
+    )
+    plan = BackfillPlanner(connection, budget, maximum_requests=40, repair_attempt_limit=3).plan(
+        ledger_mode="replay", provider_seasons=(2023, 2022)
+    )
+    assert plan.candidate_count == 2
+    assert set(plan.fixture_ids) == {102, 103}
+    connection.close()

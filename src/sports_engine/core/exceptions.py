@@ -13,6 +13,10 @@ class ProviderError(SportsEngineError):
     """Provider request or payload failed validation."""
 
 
+class ProviderUnavailableError(ProviderError):
+    """Provider could not be reached after transport retries were exhausted."""
+
+
 class ProviderRateLimitError(ProviderError):
     """Provider refused a request because of a rate limit."""
 

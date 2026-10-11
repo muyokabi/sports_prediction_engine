@@ -11,7 +11,7 @@ import httpx
 from pydantic import ValidationError
 
 from sports_engine.core.enums import Priority
-from sports_engine.core.exceptions import ProviderError, ProviderRateLimitError
+from sports_engine.core.exceptions import ProviderError, ProviderRateLimitError, ProviderUnavailableError
 from sports_engine.core.ids import query_hash
 from sports_engine.core.retry import backoff_seconds
 from sports_engine.providers.api_football.auth import ApiFootballCredentials
@@ -160,7 +160,7 @@ class ApiFootballClient:
         if last_error is not None or envelope is None or artifact is None:
             if isinstance(last_error, ProviderError):
                 raise last_error
-            raise ProviderError(f"API-Football request failed: {last_error}") from last_error
+            raise ProviderUnavailableError(f"API-Football request failed: {last_error}") from last_error
         LOG.info(
             "provider_request endpoint=%s status=%s elapsed_ms=%.1f results=%s quota_remaining=%s",
             endpoint,
@@ -234,7 +234,7 @@ class ApiFootballClient:
         if error is not None:
             if isinstance(error, ProviderError):
                 raise error
-            raise ProviderError(f"API-Football status request failed: {error}") from error
+            raise ProviderUnavailableError(f"API-Football status request failed: {error}") from error
         if status is None:
             raise ApiFootballMalformedResponseError("API-Football status response was empty")
         if self.capabilities is None:

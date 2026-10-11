@@ -123,7 +123,7 @@ class SeasonBootstrapService:
                 )
             except ProviderPlanAccessError as exc:
                 reason = str(exc)
-                mark_provider_season_inaccessible(self.connection, season, reason)
+                mark_provider_season_inaccessible(self.connection, competition_season_id, reason)
                 checkpoints.put(
                     self.connection,
                     checkpoint_key,

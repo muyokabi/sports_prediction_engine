@@ -3,9 +3,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from catboost import CatBoostError
 
 from sports_engine.evaluation.metrics import probability_integrity
 from sports_engine.models.calibration.multiclass import MulticlassProbabilityCalibrator
+from sports_engine.models.ml.catboost import CatBoostProbabilityModel
 from sports_engine.models.statistical.dixon_coles import DixonColesModel
 from sports_engine.models.statistical.elo import EloModel
 from sports_engine.models.statistical.poisson import PoissonModel
@@ -77,3 +79,14 @@ def test_probability_integrity_rejects_malformed_rows_and_detects_collapse() -> 
     invalid = probability_integrity(np.asarray([[0.8, 0.3, -0.1]]))
     assert invalid["passed"] is False
     assert "PROBABILITY_OUT_OF_BOUNDS" in invalid["reasons"]
+
+
+def test_catboost_backend_rejection_is_a_recoverable_training_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = CatBoostProbabilityModel(iterations=1)
+
+    def reject(*args: object, **kwargs: object) -> None:
+        raise CatBoostError("all features are constant")
+
+    monkeypatch.setattr(model.estimator, "fit", reject)
+    with pytest.raises(ValueError, match="CatBoost training data is not usable"):
+        model.fit(np.ones((3, 2)), np.asarray([0, 1, 2]))

@@ -11,12 +11,13 @@ from rich.table import Table
 
 from sports_engine.cli.runtime import open_database, provider_client
 from sports_engine.core.config import ApplicationMode, load_config
+from sports_engine.core.exceptions import ProviderUnavailableError
 from sports_engine.core.paths import project_root
 from sports_engine.core.telemetry import JobSummary
 from sports_engine.orchestration.locks import FileLock
 from sports_engine.orchestration.runner import job_run
 from sports_engine.sports.football.ingestion.backfill import BackfillPlanner, RequestCappedProvider
-from sports_engine.sports.football.ingestion.coverage_gate import CoverageAuditService
+from sports_engine.sports.football.ingestion.coverage_gate import CoverageAuditService, SeasonCatalogService
 from sports_engine.sports.football.ingestion.daily_update import DailyUpdateService
 from sports_engine.sports.football.ingestion.detailed_matches import DetailedMatchIngestionService
 from sports_engine.sports.football.ingestion.injuries import InjuryIngestionService
@@ -305,6 +306,13 @@ def fetch_backfill(
         max=2100,
         help="Historical season to fetch into the replay ledger; omit for the configured current ledger.",
     ),
+    past_seasons: int | None = typer.Option(
+        None,
+        "--past-seasons",
+        min=1,
+        max=10,
+        help="Latest N completed seasons for every selected league; mutually exclusive with --season.",
+    ),
     max_requests: int = typer.Option(
         1000,
         "--max-requests",
@@ -323,22 +331,22 @@ def fetch_backfill(
         help="Fetch teams and season fixture skeletons before detailed backfill.",
     ),
 ) -> None:
-    """Fetch a current or historical season and enrich its completed fixtures."""
+    """Register, fetch, and enrich selected current or historical seasons."""
+    if season is not None and past_seasons is not None:
+        console.print("[red]Use --season or --past-seasons, not both.[/]")
+        raise typer.Exit(2)
     config = load_config()
-    ledger_mode, configured_replay_season = _ledger_target(config)
-    provider_season = None
-    if season is not None:
-        ledger_mode = "replay"
-        provider_season = season
-    elif ledger_mode == "replay":
-        provider_season = configured_replay_season
+    configured_ledger, configured_replay_season = _ledger_target(config)
+    historical = season is not None or past_seasons is not None or configured_ledger == "replay"
+    ledger_mode = "replay" if historical else "production"
+    exact_season = season if season is not None else configured_replay_season if configured_ledger == "replay" else None
 
     connection = open_database(config)
     summary = JobSummary()
-    coverage_result = None
-    bootstrap_result = None
+    catalog_result = None
+    bootstrap_results = []
     backfill_result = None
-    label = str(provider_season) if provider_season is not None else "current"
+    label = f"last-{past_seasons}" if past_seasons is not None else str(exact_season or "current")
     try:
         with (
             FileLock(config.state_dir / f"fetch_backfill_{ledger_mode}_{label}.lock"),
@@ -347,24 +355,47 @@ def fetch_backfill(
             with provider_client(config, connection) as client:
                 capabilities = client.get_status(purpose=f"fetch_backfill_status:{label}", job_run_id=run_id)
                 if coverage_enabled:
-                    coverage_result = CoverageAuditService(connection, client).run(
+                    catalog_result = SeasonCatalogService(connection, client).run(
                         _candidates(),
                         job_run_id=run_id,
-                        ledger_mode=ledger_mode,
-                        replay_season=provider_season if ledger_mode == "replay" else None,
+                        current=not historical,
+                        exact_season=exact_season,
+                        past_seasons=past_seasons,
                     )
+                if catalog_result is not None:
+                    selected_seasons = catalog_result.provider_seasons
+                elif past_seasons is not None:
+                    rows = connection.execute(
+                        "SELECT DISTINCT provider_season FROM competition_seasons "
+                        "WHERE ledger_mode='replay' AND replay_eligible "
+                        "ORDER BY provider_season DESC LIMIT ?",
+                        [past_seasons],
+                    ).fetchall()
+                    selected_seasons = tuple(int(row[0]) for row in rows)
+                elif exact_season is not None:
+                    selected_seasons = (exact_season,)
+                else:
+                    selected_seasons = ()
                 if bootstrap_enabled:
-                    bootstrap_result = SeasonBootstrapService(connection, client).run(
-                        job_run_id=run_id,
-                        ledger_mode=ledger_mode,
-                        provider_season=provider_season,
-                    )
+                    bootstrap_targets = selected_seasons if historical else (None,)
+                    for bootstrap_season in bootstrap_targets:
+                        result = SeasonBootstrapService(connection, client).run(
+                            job_run_id=run_id,
+                            ledger_mode=ledger_mode,
+                            provider_season=bootstrap_season,
+                        )
+                        bootstrap_results.append(result)
+                        if not result.complete:
+                            break
                 plan = BackfillPlanner(
                     connection,
                     client.quota_budget,
                     maximum_requests=max_requests,
                     repair_attempt_limit=config.backfill.repair_attempt_limit,
-                ).plan(ledger_mode=ledger_mode, provider_season=provider_season)
+                ).plan(
+                    ledger_mode=ledger_mode,
+                    provider_seasons=selected_seasons if historical else None,
+                )
                 if plan.fixture_ids:
                     capped_client = RequestCappedProvider(client, plan.request_budget)
                     backfill_result = DetailedMatchIngestionService(
@@ -372,37 +403,38 @@ def fetch_backfill(
                         capped_client,
                         config.data_dir / "quarantine",
                     ).run(plan.fixture_ids, job_run_id=run_id)
-            if coverage_result is not None:
-                summary.requests_used = len(coverage_result.items)
-                if not coverage_result.complete:
-                    summary.warnings.append("coverage audit stopped before completion")
-            if bootstrap_result is not None:
-                summary.fixtures_discovered = bootstrap_result.fixtures_written
-                summary.fixtures_updated = bootstrap_result.fixtures_written
-                if not bootstrap_result.complete:
-                    summary.warnings.append(
-                        bootstrap_result.blocked_reason or "season bootstrap stopped before completion"
-                    )
+            if catalog_result is not None:
+                summary.requests_used = 1
+            summary.fixtures_discovered = sum(result.fixtures_written for result in bootstrap_results)
+            summary.fixtures_updated = summary.fixtures_discovered
+            for result in bootstrap_results:
+                if not result.complete:
+                    summary.warnings.append(result.blocked_reason or "season bootstrap stopped before completion")
             summary.fixtures_enriched = backfill_result.fixtures_eligible if backfill_result else 0
             summary.fixtures_quarantined = backfill_result.fixtures_quarantined if backfill_result else 0
+    except ProviderUnavailableError as exc:
+        console.print(
+            "[yellow]API-Football is temporarily unreachable after retries. "
+            "Completed work and the exact bootstrap/backfill checkpoint were preserved. "
+            "Rerun the same fetch-backfill command to continue.[/]"
+        )
+        console.print(f"[dim]{exc}[/]")
+        raise typer.Exit(2) from None
     finally:
         connection.close()
 
     coverage_eligible = (
-        sum(item.replay_eligible if ledger_mode == "replay" else item.accepted for item in coverage_result.items)
-        if coverage_result is not None
+        sum(item.replay_eligible if historical else item.accepted for item in catalog_result.items)
+        if catalog_result is not None
         else 0
     )
-    coverage_text = (
-        "skipped"
-        if coverage_result is None
-        else f"{coverage_eligible}/{len(coverage_result.items)} eligible; complete={coverage_result.complete}"
-    )
+    coverage_text = "skipped" if catalog_result is None else f"{coverage_eligible}/{len(catalog_result.items)} eligible"
     bootstrap_text = (
         "skipped"
-        if bootstrap_result is None
-        else f"teams={bootstrap_result.teams_written} fixtures={bootstrap_result.fixtures_written} "
-        f"complete={bootstrap_result.complete}"
+        if not bootstrap_results
+        else f"teams={sum(result.teams_written for result in bootstrap_results)} "
+        f"fixtures={sum(result.fixtures_written for result in bootstrap_results)} "
+        f"complete={all(result.complete for result in bootstrap_results)}"
     )
     console.print(
         f"Fetch + backfill: ledger={ledger_mode} season={label} coverage={coverage_text} "
@@ -468,7 +500,7 @@ def daily(
 
     config = load_config()
     connection = open_database(config)
-    ledger_mode, _ = _ledger_target(config)
+    ledger_mode, replay_season = _ledger_target(config)
     if as_of is not None:
         operational_date = date.fromisoformat(as_of)
     elif config.mode == ApplicationMode.PRODUCTION:
@@ -491,6 +523,28 @@ def daily(
         ):
             with provider_client(config, connection) as client:
                 capabilities = client.get_status(purpose="daily_status", job_run_id=run_id)
+                eligibility = "replay_eligible" if ledger_mode == "replay" else "admitted"
+                registered = connection.execute(
+                    f"SELECT count(*) FROM competition_seasons WHERE ledger_mode=? "
+                    f"AND provider_accessible AND {eligibility}",
+                    [ledger_mode],
+                ).fetchone()
+                initial_bootstrap = None
+                if not registered or not registered[0]:
+                    # A fresh installation has no admitted fixture universe.
+                    # Register the configured selected leagues from one catalog
+                    # response, then fetch their teams and fixture skeletons.
+                    SeasonCatalogService(connection, client).run(
+                        _candidates(),
+                        current=ledger_mode == "production",
+                        exact_season=replay_season if ledger_mode == "replay" else None,
+                        job_run_id=run_id,
+                    )
+                    initial_bootstrap = SeasonBootstrapService(connection, client).run(
+                        job_run_id=run_id,
+                        ledger_mode=ledger_mode,
+                        provider_season=replay_season if ledger_mode == "replay" else None,
+                    )
                 result = DailyUpdateService(
                     connection,
                     client,
@@ -548,6 +602,11 @@ def daily(
                     ).run(backfill_plan.fixture_ids, job_run_id=run_id)
             summary.fixtures_discovered = result.relevant_fixtures
             summary.fixtures_updated = result.fixture_records_written
+            if initial_bootstrap is not None:
+                summary.fixtures_discovered += initial_bootstrap.fixtures_written
+                summary.fixtures_updated += initial_bootstrap.fixtures_written
+                if not initial_bootstrap.complete:
+                    summary.warnings.append(initial_bootstrap.blocked_reason or "initial bootstrap incomplete")
             summary.fixtures_enriched = result.enrichment.fixtures_eligible + (
                 backfill_result.fixtures_eligible if backfill_result else 0
             )

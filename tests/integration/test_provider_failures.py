@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from sports_engine.core.enums import Priority
-from sports_engine.core.exceptions import ProviderError, ProviderRateLimitError
+from sports_engine.core.exceptions import ProviderError, ProviderRateLimitError, ProviderUnavailableError
 from sports_engine.providers.api_football.auth import ApiFootballCredentials
 from sports_engine.providers.api_football.client import ApiFootballClient
 from sports_engine.providers.api_football.errors import (
@@ -78,6 +78,22 @@ def test_remote_protocol_disconnect_is_retried(tmp_path: Path) -> None:
     assert client.get("/fixtures", {}, purpose="transport_retry", priority=Priority.P1) == []
     assert calls == 2
     assert connection.execute("SELECT http_status FROM api_request_log").fetchone() == (200,)
+    client.close()
+    connection.close()
+
+
+def test_exhausted_transport_retries_raise_provider_unavailable(tmp_path: Path) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("getaddrinfo failed")
+
+    client, connection = make_client(tmp_path, httpx.MockTransport(handler), retries=2)
+    with pytest.raises(ProviderUnavailableError, match="getaddrinfo failed"):
+        client.get("/fixtures", {}, purpose="dns_failure", priority=Priority.P1)
+    assert calls == 3
     client.close()
     connection.close()
 

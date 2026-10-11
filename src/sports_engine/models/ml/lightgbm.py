@@ -4,6 +4,7 @@ from typing import Any, Self
 
 import lightgbm as lgb
 import numpy as np
+from lightgbm.basic import LightGBMError
 
 from sports_engine.models.serialization import load_pickle, save_pickle
 
@@ -26,11 +27,17 @@ class LightGBMProbabilityModel:
         )
 
     def fit(self, features: np.ndarray, targets: np.ndarray) -> Self:
-        self.estimator.fit(features, targets)
+        try:
+            self.estimator.fit(features, targets)
+        except LightGBMError as exc:
+            raise ValueError(f"LightGBM training data is not usable: {exc}") from exc
         return self
 
     def fit_incremental(self, features: np.ndarray, targets: np.ndarray, parent: "LightGBMProbabilityModel") -> Self:
-        self.estimator.fit(features, targets, init_model=parent.estimator.booster_)
+        try:
+            self.estimator.fit(features, targets, init_model=parent.estimator.booster_)
+        except LightGBMError as exc:
+            raise ValueError(f"LightGBM incremental training data is not usable: {exc}") from exc
         return self
 
     def predict_proba(self, features: np.ndarray) -> np.ndarray:

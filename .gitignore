@@ -13,6 +13,7 @@ data/warehouse/**
 data/parquet/**
 data/quarantine/**
 artifacts/models/**
+artifacts/evaluation/**
 artifacts/evaluations/**
 artifacts/backtests/**
 artifacts/reports/**

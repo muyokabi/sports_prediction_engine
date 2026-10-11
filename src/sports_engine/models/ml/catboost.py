@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Self
 
 import numpy as np
-from catboost import CatBoostClassifier
+from catboost import CatBoostClassifier, CatBoostError
 
 from sports_engine.models.serialization import load_pickle, save_pickle
 
@@ -27,11 +27,17 @@ class CatBoostProbabilityModel:
         )
 
     def fit(self, features: np.ndarray, targets: np.ndarray) -> Self:
-        self.estimator.fit(features, targets)
+        try:
+            self.estimator.fit(features, targets)
+        except CatBoostError as exc:
+            raise ValueError(f"CatBoost training data is not usable: {exc}") from exc
         return self
 
     def fit_incremental(self, features: np.ndarray, targets: np.ndarray, parent: "CatBoostProbabilityModel") -> Self:
-        self.estimator.fit(features, targets, init_model=parent.estimator)
+        try:
+            self.estimator.fit(features, targets, init_model=parent.estimator)
+        except CatBoostError as exc:
+            raise ValueError(f"CatBoost incremental training data is not usable: {exc}") from exc
         return self
 
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
