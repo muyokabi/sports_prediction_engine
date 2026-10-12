@@ -142,6 +142,15 @@ def run_analysis(
                 [result.analysis_run_id],
             ).fetchone()
             reference_fixtures = int(reference_row[0]) if reference_row else 0
+            candidate_row = connection.execute(
+                "SELECT count(*) FILTER (WHERE o.governance_state='PRODUCTION_ACTIONABLE'), "
+                "count(*) FILTER (WHERE o.governance_state='SHADOW_ACTIONABLE') "
+                "FROM institutional_predictions i JOIN institutional_opportunities o USING (prediction_id) "
+                "WHERE CAST(i.analysis_run_id AS VARCHAR)=?",
+                [result.analysis_run_id],
+            ).fetchone()
+            production_candidates = int(candidate_row[0]) if candidate_row else 0
+            shadow_candidates = int(candidate_row[1]) if candidate_row else 0
             integrity_issues = audit_integrity(connection)
             if integrity_issues:
                 summary.errors.extend(f"{issue.check}={issue.count}" for issue in integrity_issues)
@@ -151,6 +160,7 @@ def run_analysis(
     typer.echo(
         f"Analysis {result.analysis_run_id}: {result.state}; expected={result.expected_fixtures}; "
         f"terminal={result.terminal_fixtures}; reference_fixtures={reference_fixtures}; "
+        f"production_candidates={production_candidates}; shadow_candidates={shadow_candidates}; "
         f"additional_odds_payloads={odds_payloads}; additional_odds_snapshots={odds_snapshots}; "
         f"unmatched_odds_fixtures={unmatched}; report={result.report_path}"
         f"; settled_predictions={settlement.predictions_settled}; "

@@ -1,0 +1,7 @@
+{
+  "artifact_sha256": "530b1adf4d1fea9b5a3fcec36f0f35ea473e804a486811af7dbabf4c1c28cc20",
+  "home_advantage": 60.0,
+  "k_factor": 20.0,
+  "model_type": "elo",
+  "teams": 0
+}
