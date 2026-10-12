@@ -207,7 +207,7 @@ def test_duplicate_provider_player_statistics_are_deduplicated(tmp_path: Path) -
     connection.close()
 
 
-def test_incomplete_package_is_quarantined_and_not_ml_eligible(tmp_path: Path) -> None:
+def test_incomplete_optional_player_detail_does_not_quarantine_result(tmp_path: Path) -> None:
     connection = connect(tmp_path / "incomplete.duckdb")
     migrate(connection)
     payload = _payload()
@@ -234,10 +234,11 @@ def test_incomplete_package_is_quarantined_and_not_ml_eligible(tmp_path: Path) -
         tmp_path / "quarantine",
         raw_path_resolver=lambda purpose, run_id: "details.json.gz",
     ).run([100])
-    assert result.fixtures_quarantined == 1
-    assert connection.execute("SELECT eligibility FROM fixture_quality_status").fetchone() == ("PENDING_REPAIR",)
-    assert connection.execute("SELECT count(*) FROM data_quality_issues").fetchone() == (1,)
-    assert len(list((tmp_path / "quarantine").glob("*.json"))) == 1
+    assert result.fixtures_eligible == 1
+    assert result.fixtures_quarantined == 0
+    assert connection.execute("SELECT eligibility FROM fixture_quality_status").fetchone() == ("ML_ELIGIBLE",)
+    assert connection.execute("SELECT count(*) FROM data_quality_issues").fetchone() == (0,)
+    assert len(list((tmp_path / "quarantine").glob("*.json"))) == 0
     connection.close()
 
 
@@ -412,7 +413,7 @@ def test_plan_restricted_batch_falls_back_to_full_single_fixture_response(tmp_pa
     connection.close()
 
 
-def test_missing_embedded_statistics_use_targeted_repair_endpoints(tmp_path: Path) -> None:
+def test_missing_optional_statistics_do_not_use_targeted_repair_endpoints(tmp_path: Path) -> None:
     connection = connect(tmp_path / "repair.duckdb")
     migrate(connection)
     season_id = upsert_competition_season(
@@ -462,11 +463,7 @@ def test_missing_embedded_statistics_use_targeted_repair_endpoints(tmp_path: Pat
         raw_path_resolver=lambda purpose, run_id: f"{purpose}.json.gz",
     ).run([100])
     assert result.fixtures_eligible == 1
-    assert provider.endpoints == [
-        "/fixtures",
-        "/fixtures/statistics",
-        "/fixtures/players",
-    ]
+    assert provider.endpoints == ["/fixtures"]
     connection.close()
 
 
@@ -548,7 +545,7 @@ def test_checkpoint_failure_rolls_back_entire_batch(tmp_path: Path, monkeypatch:
     connection.close()
 
 
-def test_batch_quota_interruption_resumes_without_duplicates(tmp_path: Path) -> None:
+def test_missing_optional_detail_does_not_trigger_quota_interruption(tmp_path: Path) -> None:
     connection = connect(tmp_path / "batch-resume.duckdb")
     migrate(connection)
     season_id = upsert_competition_season(
@@ -576,27 +573,13 @@ def test_batch_quota_interruption_resumes_without_duplicates(tmp_path: Path) -> 
                 return [first, incomplete_second]
             raise QuotaExhaustedError("protected reserve")
 
-    interrupted = DetailedMatchIngestionService(
+    result = DetailedMatchIngestionService(
         connection,
         InterruptedBatchProvider(),
         tmp_path / "quarantine",
         raw_path_resolver=lambda purpose, run_id: "details.json.gz",
     ).run([100, 101])
-    assert not interrupted.complete and interrupted.fixtures_eligible == 0 and interrupted.next_batch_index == 0
-    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (0,)
-
-    class ResumedBatchProvider:
-        def get(self, endpoint: str, parameters: Mapping[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
-            assert endpoint == "/fixtures"
-            return [first, second]
-
-    resumed = DetailedMatchIngestionService(
-        connection,
-        ResumedBatchProvider(),
-        tmp_path / "quarantine",
-        raw_path_resolver=lambda purpose, run_id: "details.json.gz",
-    ).run([100, 101])
-    assert resumed.complete and resumed.fixtures_eligible == 2
+    assert result.complete and result.fixtures_eligible == 2 and result.next_batch_index == 0
     assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (2,)
     assert connection.execute("SELECT count(*) FROM fixture_events").fetchone() == (2,)
     connection.close()
@@ -644,6 +627,38 @@ def test_point_in_time_dataset_reconstructs_prior_completed_match_facts(tmp_path
         for source, prediction in zip(frame["source_observation_max"], frame["prediction_timestamp"], strict=True)
     )
     assert connection.execute("SELECT count(*) FROM feature_datasets").fetchone() == (1,)
+    connection.close()
+
+
+def test_score_only_completed_result_enters_training_without_detail_or_quality_row(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "score-only-features.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2024, "current": False, "coverage": {}},
+        admitted=False,
+        replay_eligible=True,
+        ledger_mode="replay",
+        reason="replay-only",
+        priority=1,
+    )
+    payload = copy.deepcopy(_payload())
+    payload["league"]["season"] = 2024
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+
+    rows = PointInTimeFeatureBuilder(
+        connection,
+        tmp_path / "features",
+        windows=[5],
+        exponential_half_life=10,
+        prediction_lead_hours=1,
+    )._matches(("replay",))
+
+    assert len(rows) == 1
+    assert rows[0]["home_goals"] == 1
+    assert rows[0]["home_stats"]["total_shots"] is None
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (0,)
     connection.close()
 
 

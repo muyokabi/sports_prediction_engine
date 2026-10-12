@@ -64,6 +64,7 @@ class PredictionService:
             exponential_half_life=exponential_half_life,
             prediction_lead_hours=prediction_lead_hours,
             historical_ledger_modes=historical_ledger_modes,
+            replay_universe_states=["ACTIONABLE"],
         )
         self.evidence_policy = evidence_policy or EvidencePolicy(0, 0, 0, 0, 10, True, 0.40)
         self.risk_policy = risk_policy or RiskPolicy(0.01, 0.05, 5, 0.25, 0.01, 0.03, 0.0)

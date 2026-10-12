@@ -9,6 +9,7 @@ from sports_engine.core.enums import Priority
 from sports_engine.core.exceptions import QuotaExhaustedError
 from sports_engine.providers.base import SportsDataProvider
 from sports_engine.quota.budget import QuotaBudget
+from sports_engine.warehouse.transactions import transaction
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,52 @@ class RequestCappedProvider:
             priority=priority,
             job_run_id=job_run_id,
         )
+
+
+def reclassify_completed_results(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    ledger_mode: str,
+    provider_seasons: tuple[int, ...] | None = None,
+) -> int:
+    """Remove legacy repair blocks from valid completed score observations.
+
+    Older assessments treated optional event, lineup, team-stat and player-stat
+    enrichment as mandatory.  Preserve those component states and historical
+    issues, but stop retrying them as prerequisites for score modelling.
+    """
+    season_clause = ""
+    parameters: list[Any] = [ledger_mode]
+    if provider_seasons is not None:
+        if not provider_seasons:
+            return 0
+        placeholders = ",".join("?" for _ in provider_seasons)
+        season_clause = f"AND cs.provider_season IN ({placeholders}) "
+        parameters.extend(provider_seasons)
+    rows = connection.execute(
+        "SELECT q.fixture_id FROM fixture_quality_status q "
+        "JOIN fixtures_current f USING (fixture_id) "
+        "JOIN competition_seasons cs USING (competition_season_id) "
+        "WHERE cs.ledger_mode=? AND q.eligibility='PENDING_REPAIR' "
+        "AND f.status_short IN ('FT','AET','PEN') "
+        "AND f.provider_fixture_id IS NOT NULL AND f.kickoff_utc IS NOT NULL "
+        "AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL "
+        f"{season_clause}",
+        parameters,
+    ).fetchall()
+    fixture_ids = [row[0] for row in rows]
+    if not fixture_ids:
+        return 0
+    with transaction(connection):
+        connection.executemany(
+            "UPDATE fixture_quality_status SET eligibility='ML_ELIGIBLE' WHERE fixture_id=?",
+            [(fixture_id,) for fixture_id in fixture_ids],
+        )
+        connection.executemany(
+            "DELETE FROM fixture_repair_state WHERE fixture_id=?",
+            [(fixture_id,) for fixture_id in fixture_ids],
+        )
+    return len(fixture_ids)
 
 
 class BackfillPlanner:
@@ -103,12 +150,10 @@ class BackfillPlanner:
             parameters,
         ).fetchall()
         candidate_count = len(rows)
-        # One batched /fixtures call covers up to twenty IDs, but completed
-        # skeletons normally still need at least one fixture-scoped statistics
-        # request. Budget for the observed lower bound n + ceil(n / 20)
-        # instead of the development-era fiction that one request enriches
-        # twenty complete fixtures. Additional repairs remain protected by the
-        # request-capped provider and checkpoint.
-        fixture_capacity = request_budget * 20 // 21
+        # One batched /fixtures call covers up to twenty IDs and includes all
+        # provider-supplied enrichment. Optional team/player detail must never
+        # trigger fixture-scoped repair calls merely to make a completed score
+        # usable for modelling.
+        fixture_capacity = request_budget * 20
         selected = tuple(int(row[0]) for row in rows[:fixture_capacity])
         return BackfillPlan(selected, request_budget, candidate_count)

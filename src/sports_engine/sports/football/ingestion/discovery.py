@@ -15,6 +15,7 @@ from sports_engine.warehouse.repositories.leagues import upsert_competition_seas
 from sports_engine.warehouse.repositories.request_log import latest_raw_path
 
 EXCLUDED_TERMS = frozenset({"friendly", "friendlies", "u17", "u18", "u19", "u20", "u21", "u23", "youth", "reserve"})
+DEFAULT_OBSERVATION_COLLECTION_LIMIT = 40
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,40 @@ class CompetitionDiscoveryResult:
     discovered: int
     observation: int
     rejected: int
+
+
+def backfill_candidate_universe(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    limit: int = 40,
+) -> list[dict[str, Any]]:
+    """Return a bounded, governed league universe for historical collection.
+
+    Existing admitted leagues retain precedence. The remaining capacity is
+    filled by the strongest observation candidates. This expands evidence
+    collection without implicitly making a league production-actionable.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    rows = connection.execute(
+        "SELECT provider_competition_id, name, country "
+        "FROM competition_discoveries cd "
+        "JOIN competition_seasons cs USING (competition_season_id) "
+        "WHERE cd.universe_state IN ('ACTIONABLE', 'OBSERVATION') "
+        "ORDER BY cs.admitted DESC, cd.suitability_score DESC, "
+        "cd.data_quality_score DESC, cd.market_quality_score DESC, cd.name "
+        "LIMIT ?",
+        [limit],
+    ).fetchall()
+    return [
+        {
+            "provider_id": int(provider_id),
+            "name": str(name),
+            "country": str(country) if country is not None else None,
+            "priority": rank,
+        }
+        for rank, (provider_id, name, country) in enumerate(rows, start=1)
+    ]
 
 
 def score_competition(league: dict[str, Any], season: dict[str, Any]) -> SuitabilityScore:
@@ -166,14 +201,28 @@ class CompetitionDiscoveryService:
 
 
 def admit_observation_universe(connection: duckdb.DuckDBPyConnection, *, limit: int) -> list[str]:
-    """Admit the strongest observation candidates for collection, never actionability."""
+    """Fill a bounded observation collection universe, never actionability.
+
+    ``limit`` is the total collection ceiling, not a number to add on every
+    invocation. This makes automatic daily admission idempotent.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    existing_row = connection.execute(
+        "SELECT count(*) FROM competition_discoveries cd "
+        "JOIN competition_seasons cs USING (competition_season_id) "
+        "WHERE cd.universe_state='OBSERVATION' AND cs.admitted"
+    ).fetchone()
+    remaining = max(0, limit - int(existing_row[0] if existing_row else 0))
+    if remaining == 0:
+        return []
     rows = connection.execute(
         "SELECT competition_season_id FROM competition_discoveries cd "
         "JOIN competition_seasons cs USING (competition_season_id) "
         "WHERE cd.universe_state='OBSERVATION' AND NOT cs.admitted "
         "ORDER BY cd.suitability_score DESC, cd.data_quality_score DESC, "
         "cd.market_quality_score DESC, cd.name LIMIT ?",
-        [limit],
+        [remaining],
     ).fetchall()
     admitted = [str(row[0]) for row in rows]
     for rank, competition_season_id in enumerate(admitted, start=1):

@@ -17,6 +17,7 @@ from sports_engine.core.exceptions import (
 from sports_engine.core.failures import FailureCategory, classify_failure
 from sports_engine.orchestration.locks import FileLock
 from sports_engine.sports.football.ingestion.daily_update import DailyUpdateService
+from sports_engine.sports.football.normalization.fixtures import normalize_fixture
 from sports_engine.sports.football.quality.report import quality_summary
 from sports_engine.warehouse.backup import create_backup, verify_backup
 from sports_engine.warehouse.checkpoints import get as get_checkpoint
@@ -24,6 +25,7 @@ from sports_engine.warehouse.checkpoints import put as put_checkpoint
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.integrity import audit_integrity
 from sports_engine.warehouse.migrations import migrate
+from sports_engine.warehouse.repositories.fixtures import upsert_fixture
 from sports_engine.warehouse.repositories.leagues import upsert_competition_season
 from sports_engine.warehouse.transactions import transaction
 
@@ -104,6 +106,25 @@ def test_daily_catch_up_resumes_after_failure_without_losing_progress(tmp_path: 
     connection.close()
 
 
+def test_daily_catch_up_refreshes_prediction_horizon_after_checkpoint(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "refresh-horizon.duckdb")
+    migrate(connection)
+    operational = date(2026, 10, 7)
+    put_checkpoint(connection, "daily_discovery:production", {"last_date": "2026-10-08"}, None)
+    provider = DateProvider()
+
+    result = DailyUpdateService(
+        connection,
+        provider,
+        tmp_path / "quarantine",
+        raw_path_resolver=lambda purpose, run_id: f"{purpose}.json.gz",
+    ).run_catch_up(operational, ledger_mode="production")
+
+    assert provider.dates == [date(2026, 10, 8)]
+    assert result.discovery_dates == (date(2026, 10, 8),)
+    connection.close()
+
+
 def test_normalization_failure_preserves_existing_raw_evidence(tmp_path: Path) -> None:
     connection = connect(tmp_path / "normalization-crash.duckdb")
     migrate(connection)
@@ -171,6 +192,59 @@ def test_quality_integrity_and_backup_verification(tmp_path: Path) -> None:
     assert verified.row_counts["fixtures"] == 0
     (destination / "config" / "app.yaml").write_text("tampered\n", encoding="utf-8")
     assert not verify_backup(destination).valid
+
+
+def test_integrity_allows_incomplete_optional_enrichment_for_eligible_result(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "tiered-integrity.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2024, "coverage": {}},
+        admitted=False,
+        replay_eligible=True,
+        ledger_mode="replay",
+        reason="test",
+        priority=1,
+    )
+    fixture_id = upsert_fixture(
+        connection,
+        normalize_fixture(
+            {
+                "fixture": {
+                    "id": 100,
+                    "date": "2024-05-01T12:00:00+00:00",
+                    "status": {"short": "FT", "long": "Finished", "elapsed": 90},
+                },
+                "league": {"id": 39, "season": 2024, "round": "Round 1"},
+                "teams": {"home": {"id": 10, "name": "Home"}, "away": {"id": 11, "name": "Away"}},
+                "goals": {"home": 1, "away": 0},
+            }
+        ),
+        season_id,
+        "fixture.json.gz",
+    )
+    connection.execute(
+        "INSERT INTO fixture_quality_status VALUES (?, 'ML_ELIGIBLE', current_timestamp, 'details.json.gz')",
+        [fixture_id],
+    )
+    for component, state in (
+        ("fixture_metadata", "complete"),
+        ("final_score", "complete"),
+        ("home_player_stats", "incomplete"),
+    ):
+        connection.execute(
+            "INSERT INTO fixture_completeness VALUES (?, ?, ?, NULL, current_timestamp, 'details.json.gz')",
+            [fixture_id, component, state],
+        )
+    assert audit_integrity(connection) == []
+    connection.execute(
+        "UPDATE fixture_completeness SET state='incomplete' WHERE fixture_id=? AND component='final_score'",
+        [fixture_id],
+    )
+    issues = audit_integrity(connection)
+    assert [(issue.check, issue.count) for issue in issues] == [("inconsistent_ml_eligibility", 1)]
+    connection.close()
 
 
 def test_database_transaction_rolls_back_after_interruption(tmp_path: Path) -> None:

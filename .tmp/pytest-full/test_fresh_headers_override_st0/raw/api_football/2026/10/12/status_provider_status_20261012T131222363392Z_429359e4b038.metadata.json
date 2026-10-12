@@ -1,0 +1,14 @@
+{
+  "content_hash": "429359e4b03832b2fbd0c44fe33b0faba502548acddd509ce3dfb493d458968f",
+  "endpoint": "/status",
+  "http_status": 200,
+  "job_run_id": null,
+  "parameters": {},
+  "quota": {
+    "daily_limit": 7500,
+    "daily_remaining": 7469,
+    "minute_limit": 300,
+    "minute_remaining": 298
+  },
+  "retrieved_at_utc": "2026-10-12T13:12:22.363392+00:00"
+}

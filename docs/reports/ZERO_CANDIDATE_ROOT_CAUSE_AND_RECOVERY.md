@@ -1,6 +1,6 @@
 # Zero-candidate root-cause analysis and recovery
 
-> Historical evidence only. Current warehouse status and actionability are defined in `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+> Historical evidence only. Current warehouse status and actionability are defined in `docs/reports/CURRENT_IMPLEMENTATION_STATUS.md`.
 
 Date: 2026-10-10
 

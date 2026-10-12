@@ -194,8 +194,9 @@ class ModelTrainer:
             model, deployment_hyperparameters = self._refit_statistical_for_deployment(
                 model_type,
                 dataset.frame,
+                hyperparameters,
             )
-            hyperparameters = deployment_hyperparameters
+            hyperparameters = {**hyperparameters, **deployment_hyperparameters}
             deployment_training_start = min(times)
             deployment_training_end = max(times)
             test_metrics["deployment_refit"] = {
@@ -236,6 +237,7 @@ class ModelTrainer:
             "dataset_name": dataset.name,
             "dataset_config": dataset.config,
             "feature_columns": feature_columns,
+            "feature_quality_audit": self._feature_quality_audit(dataset.frame, feature_columns),
             "class_order": ["HOME", "DRAW", "AWAY"],
             "random_seed": self.random_seed,
             "leakage_audit": "passed",
@@ -346,23 +348,36 @@ class ModelTrainer:
             result.append(min(values))
         return np.asarray(result)
 
-    def _refit_statistical_for_deployment(self, model_type: str, frame: pl.DataFrame) -> tuple[Any, dict[str, Any]]:
+    def _refit_statistical_for_deployment(
+        self,
+        model_type: str,
+        frame: pl.DataFrame,
+        selected_hyperparameters: dict[str, Any],
+    ) -> tuple[Any, dict[str, Any]]:
         """Refit the deployable artifact after evaluation has consumed its holdout."""
         matches = self._matches(frame)
         if model_type == "elo":
             model: Any = EloModel()
             model.fit(matches)
         else:
-            model = DixonColesModel() if model_type == "dixon-coles" else PoissonModel()
+            model_class = DixonColesModel if model_type == "dixon-coles" else PoissonModel
+            model = model_class(
+                maximum_goals=int(selected_hyperparameters.get("maximum_goals", 10)),
+                regularization=float(selected_hyperparameters.get("regularization", 10.0)),
+            )
             timestamps = frame["prediction_timestamp"].to_list()
             model.fit_timed(
                 [(*match, timestamp) for match, timestamp in zip(matches, timestamps, strict=True)],
-                half_life_days=self.time_decay_half_life_days,
+                half_life_days=float(
+                    selected_hyperparameters.get("time_decay_half_life_days", self.time_decay_half_life_days)
+                ),
             )
             self._attach_score_model_lineage(model, frame)
         metadata = model.metadata()
         if model_type in {"poisson", "dixon-coles"}:
-            metadata["time_decay_half_life_days"] = self.time_decay_half_life_days
+            metadata["time_decay_half_life_days"] = float(
+                selected_hyperparameters.get("time_decay_half_life_days", self.time_decay_half_life_days)
+            )
         metadata["deployment_refit_rows"] = frame.height
         return model, metadata
 
@@ -383,24 +398,25 @@ class ModelTrainer:
             fixtures = [(matches[index][0], matches[index][1]) for index in fold.test]
             if model_type == "elo":
                 model: Any = EloModel()
-            elif model_type == "poisson":
-                model = PoissonModel()
-            else:
-                model = DixonColesModel()
+            elif model_type in {"poisson", "dixon-coles"}:
+                model, validation_probabilities, metadata = self._select_score_model(
+                    model_type,
+                    frame,
+                    fold.train,
+                    fold.validation,
+                )
             if model_type in {"poisson", "dixon-coles"}:
                 timestamps = frame["prediction_timestamp"].to_list()
-                timed_matches = [(*matches[index], timestamps[index]) for index in fold.train]
-                model.fit_timed(timed_matches, half_life_days=self.time_decay_half_life_days)
                 self._attach_score_model_lineage(model, frame[fold.train])
             else:
                 model.fit(train_matches)
             validation_fixtures = [(matches[index][0], matches[index][1]) for index in fold.validation]
-            metadata = model.metadata()
-            if model_type in {"poisson", "dixon-coles"}:
-                metadata["time_decay_half_life_days"] = self.time_decay_half_life_days
+            if model_type == "elo":
+                validation_probabilities = model.predict_proba(validation_fixtures)
+                metadata = model.metadata()
             return (
                 model,
-                model.predict_proba(validation_fixtures),
+                validation_probabilities,
                 model.predict_proba(fixtures),
                 metadata,
                 [],
@@ -446,6 +462,44 @@ class ModelTrainer:
             "validation_log_loss": tuned.validation_log_loss,
         }
         return ml_model, validation_probabilities, probabilities, hyperparameters, feature_columns
+
+    def _select_score_model(
+        self,
+        model_type: str,
+        frame: pl.DataFrame,
+        train: np.ndarray,
+        validation: np.ndarray,
+    ) -> tuple[Any, np.ndarray, dict[str, Any]]:
+        matches = self._matches(frame)
+        timestamps = frame["prediction_timestamp"].to_list()
+        timed_matches = [(*matches[index], timestamps[index]) for index in train]
+        validation_fixtures = [(matches[index][0], matches[index][1]) for index in validation]
+        validation_targets = self._targets(frame)[validation]
+        candidates: list[tuple[float, float]] = [
+            (regularization, half_life) for regularization in (3.0, 10.0) for half_life in (180.0, 365.0, 730.0)
+        ]
+        best: tuple[float, Any, np.ndarray, float, float] | None = None
+        model_class = DixonColesModel if model_type == "dixon-coles" else PoissonModel
+        for regularization, half_life in candidates:
+            model = model_class(regularization=regularization)
+            model.fit_timed(timed_matches, half_life_days=half_life)
+            probabilities = model.predict_proba(validation_fixtures)
+            loss = float(probability_metrics(validation_targets, probabilities)["log_loss"])
+            candidate = (loss, model, probabilities, regularization, half_life)
+            if best is None or loss < best[0]:
+                best = candidate
+        if best is None:  # pragma: no cover - candidates are a fixed non-empty grid
+            raise RuntimeError("Score-model tuning produced no candidate")
+        loss, model, probabilities, regularization, half_life = best
+        metadata = {
+            **model.metadata(),
+            "regularization": regularization,
+            "time_decay_half_life_days": half_life,
+            "validation_log_loss": loss,
+            "selection_protocol": "chronological-validation-grid-v1",
+            "candidate_count": len(candidates),
+        }
+        return model, probabilities, metadata
 
     def _attach_score_model_lineage(self, model: Any, frame: pl.DataFrame) -> None:
         """Persist exact training-row lineage used by fixture applicability."""
@@ -579,6 +633,34 @@ class ModelTrainer:
         if not columns:
             raise ValueError("Feature dataset contains no numeric model features")
         return columns
+
+    @staticmethod
+    def _feature_quality_audit(frame: pl.DataFrame, feature_columns: list[str]) -> dict[str, Any]:
+        features: dict[str, dict[str, float | int]] = {}
+        for name in feature_columns:
+            series = frame[name]
+            observed = series.drop_nulls()
+            counts = observed.value_counts().get_column("count").to_numpy()
+            standard_deviation = observed.cast(pl.Float64).std()
+            features[name] = {
+                "missing_fraction": series.null_count() / max(1, frame.height),
+                "unique_values": observed.n_unique(),
+                "dominant_fraction": float(np.max(counts)) / max(1, len(observed)),
+                "standard_deviation": (
+                    float(standard_deviation) if isinstance(standard_deviation, (int, float)) else 0.0
+                ),
+            }
+        return {
+            "rows": frame.height,
+            "active_features": len(feature_columns),
+            "features_at_least_50_percent_missing": sum(
+                values["missing_fraction"] >= 0.5 for values in features.values()
+            ),
+            "features_at_least_90_percent_missing": sum(
+                values["missing_fraction"] >= 0.9 for values in features.values()
+            ),
+            "features": features,
+        }
 
     @staticmethod
     def _ordered_probabilities(model: Any, matrix: np.ndarray) -> np.ndarray:

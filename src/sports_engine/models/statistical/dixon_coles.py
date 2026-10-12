@@ -13,7 +13,7 @@ class DixonColesModel(PoissonModel):
 
     def fit(self, matches: list[tuple[str, str, int, int]]) -> "DixonColesModel":
         super().fit(matches)
-        return self._fit_rho(matches)
+        return self._fit_rho(matches, np.ones(len(matches), dtype=float))
 
     def fit_timed(
         self,
@@ -23,9 +23,13 @@ class DixonColesModel(PoissonModel):
         reference_time: datetime | None = None,
     ) -> "DixonColesModel":
         super().fit_timed(matches, half_life_days=half_life_days, reference_time=reference_time)
-        return self._fit_rho([(home, away, hg, ag) for home, away, hg, ag, _ in matches])
+        reference = reference_time or max(row[4] for row in matches)
+        weights = np.asarray(
+            [2 ** (-max(0.0, (reference - row[4]).total_seconds() / 86_400) / half_life_days) for row in matches]
+        )
+        return self._fit_rho([(home, away, hg, ag) for home, away, hg, ag, _ in matches], weights)
 
-    def _fit_rho(self, matches: list[tuple[str, str, int, int]]) -> "DixonColesModel":
+    def _fit_rho(self, matches: list[tuple[str, str, int, int]], weights: np.ndarray) -> "DixonColesModel":
         rates = [self.expected_goals(home, away) for home, away, _, _ in matches]
         maximum_rate = max(max(home_rate, away_rate) for home_rate, away_rate in rates)
         maximum_product = max(home_rate * away_rate for home_rate, away_rate in rates)
@@ -36,10 +40,10 @@ class DixonColesModel(PoissonModel):
 
         def objective(rho: float) -> float:
             loss = 0.0
-            for home, away, home_goals, away_goals in matches:
+            for weight, (home, away, home_goals, away_goals) in zip(weights, matches, strict=True):
                 home_rate, away_rate = self.expected_goals(home, away)
                 adjustment = self._tau(home_goals, away_goals, home_rate, away_rate, rho)
-                loss -= np.log(max(adjustment, 1e-12))
+                loss -= float(weight) * np.log(max(adjustment, 1e-12))
             return float(loss)
 
         fitted = minimize_scalar(objective, bounds=(lower, upper), method="bounded")
@@ -75,4 +79,6 @@ class DixonColesModel(PoissonModel):
         return 1.0
 
     def metadata(self) -> dict[str, object]:
-        return {"model_type": "dixon_coles", "maximum_goals": self.maximum_goals, "rho": self.rho}
+        metadata = super().metadata()
+        metadata.update({"model_type": "dixon_coles", "rho": self.rho})
+        return metadata

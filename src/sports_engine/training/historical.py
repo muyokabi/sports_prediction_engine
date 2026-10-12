@@ -5,6 +5,7 @@ from pathlib import Path
 import duckdb
 
 from sports_engine.core.config import AppConfig, ApplicationMode
+from sports_engine.evaluation.comparison import compare_evaluation_reports
 from sports_engine.evaluation.reports import WalkForwardEvaluator
 from sports_engine.models.registry import MODEL_TYPES, validate_model_type
 from sports_engine.sports.football.features.dataset import PointInTimeFeatureBuilder
@@ -29,6 +30,7 @@ class HistoricalTrainingResult:
     dataset_rows: int
     replay_rows: int
     models: tuple[HistoricalModelResult, ...]
+    comparison_path: Path | None
     promotion: PromotionCycleResult | None
 
 
@@ -40,6 +42,7 @@ def train_historical_models(
     dataset_name: str | None = None,
     rolling_periods: int | None = None,
     assess_promotions: bool = True,
+    include_observation_leagues: bool = False,
     now: datetime | None = None,
 ) -> HistoricalTrainingResult:
     """Force full-refit candidates from current plus replay point-in-time history."""
@@ -49,14 +52,14 @@ def train_historical_models(
 
     replay_row = connection.execute(
         "SELECT count(*) FROM fixtures_current f JOIN competition_seasons cs "
-        "USING (competition_season_id) JOIN fixture_quality_status q USING (fixture_id) "
-        "WHERE cs.ledger_mode='replay' AND q.eligibility='ML_ELIGIBLE' "
-        "AND f.status_short IN ('FT','AET','PEN')"
+        "USING (competition_season_id) WHERE cs.ledger_mode='replay' "
+        "AND f.status_short IN ('FT','AET','PEN') "
+        "AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL"
     ).fetchone()
     replay_rows = int(replay_row[0]) if replay_row else 0
     if replay_rows == 0:
         raise ValueError(
-            "No ML-eligible replay fixtures are available. Run football fetch-backfill "
+            "No completed replay results are available. Run football fetch-backfill "
             "with --season or --past-seasons first."
         )
 
@@ -71,6 +74,7 @@ def train_historical_models(
         exponential_half_life=config.features.exponential_half_life,
         prediction_lead_hours=config.features.prediction_lead_hours,
         historical_ledger_modes=historical_ledgers,
+        replay_universe_states=None if include_observation_leagues else ["ACTIONABLE"],
     ).build(name, ledger_mode=primary_ledger)
 
     trainer = ModelTrainer(
@@ -111,6 +115,17 @@ def train_historical_models(
         except (OSError, RuntimeError, ValueError) as exc:
             outcomes.append(HistoricalModelResult(model_type, version, None, str(exc)))
 
+    evaluation_paths = [item.evaluation_path for item in outcomes if item.evaluation_path is not None]
+    comparison_path = (
+        compare_evaluation_reports(
+            evaluation_paths,
+            config.artifacts_dir / "evaluation" / "comparisons",
+            random_seed=config.models.random_seed,
+        )
+        if len(evaluation_paths) > 1
+        else None
+    )
+
     promotion = (
         run_automated_promotion(connection, config, versions=tuple(trained_versions), now=observed)
         if assess_promotions and trained_versions
@@ -122,5 +137,6 @@ def train_historical_models(
         artifact.row_count,
         replay_rows,
         tuple(outcomes),
+        comparison_path,
         promotion,
     )

@@ -1,0 +1,269 @@
+{
+  "artifact_path": "C:\\Users\\JOSHUA_X\\Music\\sports_prediction_engine\\.tmp\\pytest-final\\test_training_registers_immuta0\\artifacts\\models\\2026\\10\\12\\elo-20261012T132244550711Z-c518b719\\model.pkl",
+  "artifact_sha256": "7c3c831edb7ea527d4583b80491ebe3c994bca8d6467ccc085ab4252e79811e9",
+  "calibration_method": null,
+  "class_order": [
+    "HOME",
+    "DRAW",
+    "AWAY"
+  ],
+  "created_at": "2026-10-12 13:22:44.550711+00:00",
+  "dataset_config": {
+    "ledger_mode": "replay"
+  },
+  "dataset_id": "10000000-0000-0000-0000-000000000001",
+  "dataset_name": "synthetic",
+  "feature_columns": [],
+  "feature_quality_audit": {
+    "active_features": 0,
+    "features": {},
+    "features_at_least_50_percent_missing": 0,
+    "features_at_least_90_percent_missing": 0,
+    "rows": 30
+  },
+  "feature_schema_hash": "schema-hash",
+  "git_commit": "66533f2690b152f7b43f90a3e2f218b3198738d4",
+  "hyperparameters": {
+    "deployment_refit_rows": 30,
+    "home_advantage": 60.0,
+    "k_factor": 20.0,
+    "model_type": "elo",
+    "teams": 4
+  },
+  "leakage_audit": "passed",
+  "library_versions": {
+    "catboost": "1.2.10",
+    "lightgbm": "4.7.0",
+    "numpy": "2.5.3",
+    "polars": "2.0.0",
+    "scikit-learn": "1.9.1",
+    "scipy": "1.18.1",
+    "sports-prediction-engine": "0.1.0"
+  },
+  "metrics": {
+    "accuracy": 0.3333333333333333,
+    "balanced_accuracy": 0.3333333333333333,
+    "bookmaker_baseline": {
+      "accuracy": 0.3333333333333333,
+      "balanced_accuracy": 0.3333333333333333,
+      "brier": 0.6883333333333334,
+      "calibration_curves": {
+        "away": [
+          {
+            "count": 6,
+            "mean_predicted": 0.3,
+            "observed_frequency": 0.3333333333333333
+          }
+        ],
+        "draw": [
+          {
+            "count": 6,
+            "mean_predicted": 0.25,
+            "observed_frequency": 0.3333333333333333
+          }
+        ],
+        "home": [
+          {
+            "count": 6,
+            "mean_predicted": 0.45,
+            "observed_frequency": 0.3333333333333333
+          }
+        ]
+      },
+      "confusion_matrix": [
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ]
+      ],
+      "expected_calibration_error": 0.1166666666666667,
+      "log_loss": 1.1295916205545327,
+      "probability_integrity": {
+        "largest_duplicate_cluster": 6,
+        "maximum_normalization_error": 0.0,
+        "maximum_probability": 0.45,
+        "mean_entropy": 1.0670938948757505,
+        "minimum_entropy": 1.0670938948757507,
+        "minimum_probability": 0.25,
+        "passed": true,
+        "reasons": [],
+        "rows": 6,
+        "unique_vector_fraction": 0.16666666666666666,
+        "unique_vectors_at_6dp": 1
+      },
+      "rows": 6,
+      "rps": 0.22958333333333333
+    },
+    "brier": 0.6603773583766847,
+    "calibration_curves": {
+      "away": [
+        {
+          "count": 3,
+          "mean_predicted": 0.29250109195435603,
+          "observed_frequency": 0.0
+        },
+        {
+          "count": 3,
+          "mean_predicted": 0.3307027677527355,
+          "observed_frequency": 0.6666666666666666
+        }
+      ],
+      "draw": [
+        {
+          "count": 6,
+          "mean_predicted": 0.25,
+          "observed_frequency": 0.3333333333333333
+        }
+      ],
+      "home": [
+        {
+          "count": 6,
+          "mean_predicted": 0.4383980701464542,
+          "observed_frequency": 0.3333333333333333
+        }
+      ]
+    },
+    "calibration_required": false,
+    "confusion_matrix": [
+      [
+        2,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ]
+    ],
+    "deployment_refit": {
+      "deployment_rows": 30,
+      "deployment_training_cutoff": "2025-01-30T00:00:00+00:00",
+      "evaluation_training_cutoff": "2025-01-18T00:00:00+00:00",
+      "performed": true,
+      "protocol": "evaluate-on-untouched-holdout-then-refit-all-observations"
+    },
+    "evidence_reasons": [
+      "INSUFFICIENT_VALIDATION_HISTORY",
+      "INSUFFICIENT_CHRONOLOGICAL_FOLDS"
+    ],
+    "evidence_state": "RESEARCH_TRAINABLE",
+    "expected_calibration_error": 0.1050647368131209,
+    "log_loss": 1.0917501786181982,
+    "probability_integrity": {
+      "largest_duplicate_cluster": 2,
+      "maximum_normalization_error": 0.0,
+      "maximum_probability": 0.45974551786261375,
+      "mean_entropy": 1.070416922749012,
+      "minimum_entropy": 1.0628776188657463,
+      "minimum_probability": 0.25,
+      "passed": true,
+      "reasons": [],
+      "rows": 6,
+      "unique_vector_fraction": 0.6666666666666666,
+      "unique_vectors_at_6dp": 4
+    },
+    "rps": 0.21560534585500898,
+    "test_end": "2025-01-30T00:00:00+00:00",
+    "test_rows": 6,
+    "test_start": "2025-01-25T00:00:00+00:00",
+    "train_rows": 18,
+    "training_class_counts": {
+      "AWAY": 6,
+      "DRAW": 6,
+      "HOME": 6
+    },
+    "uncalibrated": {
+      "accuracy": 0.3333333333333333,
+      "balanced_accuracy": 0.3333333333333333,
+      "brier": 0.6603773583766847,
+      "calibration_curves": {
+        "away": [
+          {
+            "count": 3,
+            "mean_predicted": 0.29250109195435603,
+            "observed_frequency": 0.0
+          },
+          {
+            "count": 3,
+            "mean_predicted": 0.3307027677527355,
+            "observed_frequency": 0.6666666666666666
+          }
+        ],
+        "draw": [
+          {
+            "count": 6,
+            "mean_predicted": 0.25,
+            "observed_frequency": 0.3333333333333333
+          }
+        ],
+        "home": [
+          {
+            "count": 6,
+            "mean_predicted": 0.4383980701464542,
+            "observed_frequency": 0.3333333333333333
+          }
+        ]
+      },
+      "confusion_matrix": [
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ],
+        [
+          2,
+          0,
+          0
+        ]
+      ],
+      "expected_calibration_error": 0.1050647368131209,
+      "log_loss": 1.0917501786181982,
+      "probability_integrity": {
+        "largest_duplicate_cluster": 2,
+        "maximum_normalization_error": 0.0,
+        "maximum_probability": 0.45974551786261375,
+        "mean_entropy": 1.070416922749012,
+        "minimum_entropy": 1.0628776188657463,
+        "minimum_probability": 0.25,
+        "passed": true,
+        "reasons": [],
+        "rows": 6,
+        "unique_vector_fraction": 0.6666666666666666,
+        "unique_vectors_at_6dp": 4
+      },
+      "rps": 0.21560534585500898
+    },
+    "validation_end": "2025-01-24T00:00:00+00:00",
+    "validation_rows": 6,
+    "validation_start": "2025-01-19T00:00:00+00:00"
+  },
+  "model_type": "elo",
+  "random_seed": 7,
+  "status": "candidate",
+  "training_dataset_hash": "dataset-hash-synthetic",
+  "training_end": "2025-01-30 00:00:00+00:00",
+  "training_start": "2025-01-01 00:00:00+00:00",
+  "version": "elo-20261012T132244550711Z-c518b719"
+}

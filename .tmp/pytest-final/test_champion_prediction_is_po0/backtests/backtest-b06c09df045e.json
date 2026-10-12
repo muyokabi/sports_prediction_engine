@@ -1,0 +1,10 @@
+{
+  "all_models": false,
+  "bets": 2,
+  "created_at": "2026-10-12T13:22:37.339929+00:00",
+  "decision_rule": "probability_difference>=0.03;expected_value>=0.0",
+  "decisions_written": 2,
+  "predictions_seen": 2,
+  "profit": 4.0,
+  "roi": 2.0
+}

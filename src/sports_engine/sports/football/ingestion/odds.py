@@ -30,6 +30,8 @@ class OddsIngestionResult:
     payloads_seen: int
     snapshots_written: int
     fixtures_not_in_ledger: int
+    request_scopes: int = 0
+    blocked_reason: str | None = None
 
 
 class OddsIngestionService:
@@ -59,6 +61,8 @@ class OddsIngestionService:
         purpose = f"odds:{target_date.isoformat()}"
         seen = written = missing = 0
         scopes = self._request_scopes(target_date, ledger_mode=ledger_mode, timezone=timezone)
+        if not scopes:
+            return OddsIngestionResult(0, 0, 0, 0, "NO_GOVERNED_COMPETITION_SCOPE")
         for parameters in scopes:
             for payload in self.provider.get_all_pages(
                 Endpoint.ODDS,
@@ -82,7 +86,7 @@ class OddsIngestionService:
                     written += 1
                 elif prices and not self._fixture_exists(prices[0].provider_fixture_id):
                     missing += 1
-        return OddsIngestionResult(seen, written, missing)
+        return OddsIngestionResult(seen, written, missing, len(scopes), None)
 
     def _request_scopes(
         self,
@@ -101,7 +105,8 @@ class OddsIngestionService:
             "AND pem.entity_type='competition' "
             "WHERE cs.ledger_mode=? AND (cs.admitted OR cs.replay_eligible) "
             "AND EXISTS (SELECT 1 FROM competition_discoveries d "
-            "WHERE d.competition_season_id=cs.competition_season_id AND d.universe_state='ACTIONABLE') "
+            "WHERE d.competition_season_id=cs.competition_season_id "
+            "AND d.universe_state IN ('ACTIONABLE', 'OBSERVATION')) "
             "AND f.status_short IN ('NS','TBD') "
             "AND CAST(timezone(?, f.kickoff_utc) AS DATE)=? "
             "ORDER BY 1, 2",

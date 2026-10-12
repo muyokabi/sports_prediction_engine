@@ -1,0 +1,11 @@
+{
+  "artifact_sha256": "9ea3b03b315f392ee4951ee5dae70652a6ba9fa80af259169d164476ffc1aa52",
+  "competitions": 0,
+  "fixtures": 0,
+  "home_advantage": 0.2,
+  "intercept": 0.1823215567939546,
+  "maximum_goals": 10,
+  "model_type": "poisson",
+  "regularization": 10.0,
+  "teams": 0
+}

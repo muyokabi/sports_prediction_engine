@@ -94,7 +94,8 @@ class AnalysisService:
         self._fail_stale_analysis_runs(observed)
         rows = self.connection.execute(
             "SELECT CAST(f.fixture_id AS VARCHAR), f.kickoff_utc, f.status_short, "
-            "CAST(f.home_team_id AS VARCHAR), h.name, CAST(f.away_team_id AS VARCHAR), a.name, c.name "
+            "CAST(f.home_team_id AS VARCHAR), h.name, CAST(f.away_team_id AS VARCHAR), a.name, c.name, "
+            "CAST(c.competition_id AS VARCHAR) "
             "FROM fixtures_current f JOIN competition_seasons cs USING (competition_season_id) "
             "JOIN competitions c USING (competition_id) JOIN teams h ON h.team_id=f.home_team_id "
             "JOIN teams a ON a.team_id=f.away_team_id WHERE cs.ledger_mode=? AND cs.admitted "
@@ -141,7 +142,17 @@ class AnalysisService:
         prices_written = 0
         self.connection.begin()
         try:
-            for fixture_id, kickoff, status, home_id, home_name, away_id, away_name, competition in rows:
+            for (
+                fixture_id,
+                kickoff,
+                status,
+                home_id,
+                home_name,
+                away_id,
+                away_name,
+                competition,
+                competition_scope_key,
+            ) in rows:
                 target = ScheduledFixture(fixture_id, kickoff, home_id, away_id, status)
                 dependency = assess_intervening_fixtures(target, schedule, analysis_timestamp=observed)
                 has_institutional_price = False
@@ -159,7 +170,7 @@ class AnalysisService:
                         observed,
                         fundamental,
                         job_run_id,
-                        str(competition),
+                        str(competition_scope_key),
                     )
                     prices_written += written
                     has_institutional_price = True

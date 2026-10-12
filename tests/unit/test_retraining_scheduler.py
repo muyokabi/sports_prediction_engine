@@ -7,7 +7,12 @@ import pytest
 
 from sports_engine.models.registry import ModelRegistry, ModelRun
 from sports_engine.training.continuous import _train_due_candidate, run_due_ml_updates
-from sports_engine.training.scheduler import UpdateDecision, UpdateTrigger, assess_model_update
+from sports_engine.training.scheduler import (
+    DEFAULT_RETRAINING_POLICIES,
+    UpdateDecision,
+    UpdateTrigger,
+    assess_model_update,
+)
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
 
@@ -97,3 +102,9 @@ def test_due_ml_update_falls_back_to_immutable_full_refit() -> None:
     assert [call["training_mode"] for call in calls] == ["warm_start", "full_refit"]
     assert calls[0]["parent_model_version"] == "parent"
     assert "parent_model_version" not in calls[1]
+
+
+def test_automatic_ml_updates_use_full_refits() -> None:
+    assert DEFAULT_RETRAINING_POLICIES["logistic"].mode == "full_refit"
+    assert DEFAULT_RETRAINING_POLICIES["catboost"].mode == "full_refit"
+    assert DEFAULT_RETRAINING_POLICIES["lightgbm"].mode == "full_refit"

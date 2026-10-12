@@ -92,6 +92,8 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     assert manifest["class_order"] == ["HOME", "DRAW", "AWAY"]
     assert manifest["random_seed"] == 7
     assert manifest["artifact_sha256"] == sha256(result.artifact_path.read_bytes()).hexdigest()
+    assert manifest["feature_quality_audit"]["rows"] == 30
+    assert manifest["feature_quality_audit"]["active_features"] == len(manifest["feature_columns"])
     assert json.loads(row[3])["bookmaker_baseline"]["rows"] == 6
     if model_type in {"elo", "poisson", "dixon-coles"}:
         deployment = json.loads(row[3])["deployment_refit"]
@@ -189,7 +191,12 @@ def test_walk_forward_evaluation_writes_reproducible_report(tmp_path: Path) -> N
     report = WalkForwardEvaluator(connection, tmp_path / "reports", random_seed=7, cpu_threads=1).evaluate(
         "logistic", dataset_name="synthetic"
     )
-    assert json.loads(report.path.read_text())["candidate_version"] == candidate.version
+    payload = json.loads(report.path.read_text())
+    assert payload["candidate_version"] == candidate.version
+    assert payload["candidate_training_mode"] == "full_refit"
+    prediction_artifact = payload["prediction_artifact"]
+    assert prediction_artifact["rows"] == 12
+    assert Path(prediction_artifact["path"]).is_file()
     assert report.aggregate_metrics["folds"] == 4
     assert report.aggregate_metrics["test_rows"] == 12
     assert report.aggregate_metrics["bookmaker_baseline"]["rows"] == 12
@@ -214,11 +221,12 @@ def test_probability_scope_validation_is_bound_to_exact_model_and_fails_closed(t
     )
     evaluator._persist_probability_scope_validations(
         "dixon-coles",
-        "dataset-hash-synthetic",
+        trained.version,
         {
             "probability_forensics": {
                 "competition_metrics_minimum_30_rows": {
-                    "Small League": {
+                    "competition-small": {
+                        "competition_name": "Small League",
                         "rows": 99,
                         "log_loss": 1.0,
                         "brier": 0.6,
@@ -230,7 +238,8 @@ def test_probability_scope_validation_is_bound_to_exact_model_and_fails_closed(t
                             "brier": {"upper": 0.65},
                         },
                     },
-                    "Unstable League": {
+                    "competition-unstable": {
+                        "competition_name": "Unstable League",
                         "rows": 120,
                         "log_loss": 1.0,
                         "brier": 0.6,
@@ -242,7 +251,8 @@ def test_probability_scope_validation_is_bound_to_exact_model_and_fails_closed(t
                             "brier": {"upper": 0.65},
                         },
                     },
-                    "Validated League": {
+                    "competition-validated": {
+                        "competition_name": "Validated League",
                         "rows": 120,
                         "log_loss": 1.0,
                         "brier": 0.6,
@@ -265,9 +275,9 @@ def test_probability_scope_validation_is_bound_to_exact_model_and_fails_closed(t
         "WHERE model_version=? ORDER BY scope_key",
         [trained.version],
     ).fetchall()
-    assert rows[0][0:2] == ("Small League", "INSUFFICIENT_SAMPLE")
+    assert rows[0][0:2] == ("competition-small", "INSUFFICIENT_SAMPLE")
     assert "INSUFFICIENT_COMPETITION_EVALUATION_ROWS" in json.loads(rows[0][2])
-    assert rows[1][0:2] == ("Unstable League", "FAILED")
+    assert rows[1][0:2] == ("competition-unstable", "FAILED")
     assert "COMPETITION_CALIBRATION_ECE_EXCEEDED" in json.loads(rows[1][2])
-    assert rows[2][0:2] == ("Validated League", "VALIDATED")
+    assert rows[2][0:2] == ("competition-validated", "VALIDATED")
     connection.close()

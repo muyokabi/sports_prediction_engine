@@ -1,0 +1,24 @@
+{
+  "created_at": "2026-10-12T13:00:44.910278+00:00",
+  "database": "data/warehouse/sports.duckdb",
+  "files": {
+    "config/app.yaml": "dd6f4c375f1d5bc06b5289d9cdacfedf1855df599e47e09bf43b4ac0700c9552",
+    "data/warehouse/sports.duckdb": "6b52f17f1bedcb5663b52387468356b3873a5a109cdb1b3af3f159efc8c15c5e"
+  },
+  "required_artifacts": [
+    "data/warehouse/sports.duckdb",
+    "config/app.yaml"
+  ],
+  "row_counts": {
+    "api_request_log": 0,
+    "fixture_observations": 0,
+    "fixture_quality_status": 0,
+    "fixtures": 0,
+    "model_runs": 0,
+    "odds_snapshots": 0,
+    "prediction_decisions": 0,
+    "prediction_runs": 0,
+    "predictions": 0
+  },
+  "schema_version": 33
+}

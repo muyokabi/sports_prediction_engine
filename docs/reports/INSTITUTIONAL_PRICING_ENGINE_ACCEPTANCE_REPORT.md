@@ -1,6 +1,6 @@
 # Institutional Pricing Engine Acceptance Report
 
-> Historical evidence only. Current classification is `RESEARCH_ONLY / FAIL_CLOSED`; see `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+> Historical evidence only. See `docs/reports/CURRENT_IMPLEMENTATION_STATUS.md` for the current classification.
 
 Report date: 2026-10-08 (Africa/Nairobi)
 

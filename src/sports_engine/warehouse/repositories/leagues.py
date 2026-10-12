@@ -27,8 +27,10 @@ def upsert_competition_season(
     connection.execute(
         "INSERT INTO competitions (competition_id, name, country, competition_type, logo_url, "
         "created_at, updated_at, source_raw_path, retrieved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT (competition_id) DO UPDATE SET name=excluded.name, country=excluded.country, "
-        "competition_type=excluded.competition_type, logo_url=excluded.logo_url, "
+        "ON CONFLICT (competition_id) DO UPDATE SET name=excluded.name, "
+        "country=coalesce(excluded.country, competitions.country), "
+        "competition_type=coalesce(excluded.competition_type, competitions.competition_type), "
+        "logo_url=coalesce(excluded.logo_url, competitions.logo_url), "
         "updated_at=excluded.updated_at, source_raw_path=excluded.source_raw_path, "
         "retrieved_at=excluded.retrieved_at",
         [

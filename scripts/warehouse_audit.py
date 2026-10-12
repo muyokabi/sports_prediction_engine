@@ -41,6 +41,13 @@ def audit(path: Path) -> dict[str, Any]:
             "(SELECT count(*) FROM shadow_opportunities) shadow_opportunities, "
             "(SELECT count(*) FROM shadow_opportunities WHERE settled_at IS NOT NULL) settled_shadow",
         )[0]
+        latest_backfill = _rows(
+            connection,
+            "SELECT job_run_id, started_at, finished_at, status, metrics "
+            "FROM job_runs WHERE job_name LIKE 'football.fetch_backfill.%' "
+            "ORDER BY started_at DESC LIMIT 1",
+        )
+        latest_backfill_id = str(latest_backfill[0]["job_run_id"]) if latest_backfill else None
         return {
             "database": str(path.resolve()),
             "counts": counts,
@@ -66,6 +73,49 @@ def audit(path: Path) -> dict[str, Any]:
             "component_states": _rows(
                 connection,
                 "SELECT component, state, count(*) count FROM fixture_completeness GROUP BY 1,2 ORDER BY 1,2",
+            ),
+            "repair_missing_combinations": _rows(
+                connection,
+                "SELECT CAST(last_missing AS VARCHAR) missing, count(*) fixtures "
+                "FROM fixture_repair_state GROUP BY 1 ORDER BY 2 DESC, 1",
+            ),
+            "replay_competition_coverage": _rows(
+                connection,
+                "SELECT CAST(pem.provider_entity_id AS BIGINT) provider_competition_id, "
+                "c.name, c.country, count(DISTINCT cs.provider_season) registered_seasons, "
+                "count(DISTINCT f.fixture_id) fixtures, "
+                "count(DISTINCT f.fixture_id) FILTER (WHERE f.status_short IN ('FT','AET','PEN')) completed, "
+                "count(DISTINCT q.fixture_id) assessed, "
+                "count(DISTINCT q.fixture_id) FILTER (WHERE q.eligibility='ML_ELIGIBLE') ml_eligible, "
+                "count(DISTINCT q.fixture_id) FILTER (WHERE q.eligibility='PENDING_REPAIR') pending_repair, "
+                "count(DISTINCT f.fixture_id) FILTER (WHERE f.status_short IN ('FT','AET','PEN') "
+                "AND q.fixture_id IS NULL) unassessed_completed, min(f.kickoff_utc) first_fixture, "
+                "max(f.kickoff_utc) last_fixture "
+                "FROM competition_seasons cs JOIN competitions c USING (competition_id) "
+                "JOIN provider_entity_map pem ON pem.canonical_entity_id=c.competition_id "
+                "AND pem.entity_type='competition' LEFT JOIN fixtures_current f USING (competition_season_id) "
+                "LEFT JOIN fixture_quality_status q USING (fixture_id) "
+                "WHERE cs.ledger_mode='replay' AND cs.replay_eligible "
+                "GROUP BY 1,2,3 ORDER BY ml_eligible DESC, c.name",
+            ),
+            "latest_backfill": latest_backfill[0] if latest_backfill else None,
+            "latest_backfill_requests": (
+                _rows(
+                    connection,
+                    "SELECT endpoint, split_part(purpose, ':', 1) purpose_group, count(*) requests, "
+                    "sum(coalesce(response_results, 0)) response_results, "
+                    "min(requests_remaining_daily) minimum_daily_remaining "
+                    f"FROM api_request_log WHERE CAST(job_run_id AS VARCHAR)='{latest_backfill_id}' "
+                    "GROUP BY 1,2 ORDER BY requests DESC, endpoint, purpose_group",
+                )
+                if latest_backfill_id is not None
+                else []
+            ),
+            "feature_datasets": _rows(
+                connection,
+                "SELECT name, created_at, feature_cutoff_start, feature_cutoff_end, "
+                "dataset_hash, parquet_path, config "
+                "FROM feature_datasets ORDER BY created_at DESC",
             ),
             "repair_attempts": _rows(
                 connection,

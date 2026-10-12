@@ -7,7 +7,11 @@ from sports_engine.core.enums import Priority
 from sports_engine.core.exceptions import QuotaExhaustedError
 from sports_engine.providers.api_football.quota import QuotaObservation
 from sports_engine.quota.budget import QuotaBudget, QuotaPolicy
-from sports_engine.sports.football.ingestion.backfill import BackfillPlanner, RequestCappedProvider
+from sports_engine.sports.football.ingestion.backfill import (
+    BackfillPlanner,
+    RequestCappedProvider,
+    reclassify_completed_results,
+)
 from sports_engine.sports.football.normalization.fixtures import normalize_fixture
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
@@ -82,6 +86,54 @@ def test_request_cap_counts_batch_and_targeted_repairs() -> None:
     with pytest.raises(QuotaExhaustedError, match="per-run request cap"):
         capped.get("/fixtures", {}, purpose="overflow", priority=Priority.P3)
     assert capped.requests_used == 2
+
+
+def test_legacy_optional_detail_failure_is_reclassified_without_api_call(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "reclassify.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2024, "current": False, "coverage": {}},
+        admitted=False,
+        replay_eligible=True,
+        ledger_mode="replay",
+        reason="replay-only",
+        priority=1,
+    )
+    fixture_id = upsert_fixture(
+        connection,
+        normalize_fixture(
+            {
+                "fixture": {
+                    "id": 100,
+                    "date": "2024-05-01T12:00:00+00:00",
+                    "status": {"short": "FT", "long": "Finished", "elapsed": 90},
+                },
+                "league": {"id": 39, "season": 2024, "round": "Round 1"},
+                "teams": {"home": {"id": 10, "name": "Home"}, "away": {"id": 11, "name": "Away"}},
+                "goals": {"home": 1, "away": 0},
+            }
+        ),
+        season_id,
+        "fixture.json.gz",
+    )
+    now = datetime.now(UTC)
+    connection.execute(
+        "INSERT INTO fixture_quality_status VALUES (?, 'PENDING_REPAIR', ?, 'details.json.gz')",
+        [fixture_id, now],
+    )
+    connection.execute(
+        "INSERT INTO fixture_repair_state VALUES (?, 1, ?, ?, '[\"home_player_stats\"]')",
+        [fixture_id, now, now],
+    )
+
+    assert reclassify_completed_results(
+        connection, ledger_mode="replay", provider_seasons=(2024,)
+    ) == 1
+    assert connection.execute("SELECT eligibility FROM fixture_quality_status").fetchone() == ("ML_ELIGIBLE",)
+    assert connection.execute("SELECT count(*) FROM fixture_repair_state").fetchone() == (0,)
+    connection.close()
 
 
 def test_backfill_can_be_restricted_to_one_registered_season(tmp_path: Path) -> None:

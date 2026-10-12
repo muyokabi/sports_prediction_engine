@@ -15,9 +15,9 @@ def league_payload(provider_id: int, *, players: bool = True) -> dict[str, Any]:
         "league": {
             "id": provider_id,
             "name": f"League {provider_id}",
-            "country": "Country",
             "type": "League",
         },
+        "country": {"name": "Testland", "code": "TL"},
         "seasons": [
             {
                 "year": 2026,
@@ -131,8 +131,9 @@ def test_replay_audit_requests_exact_year_and_labels_ledger(tmp_path: Path) -> N
     assert result.complete and result.items[0].season == 2024
     assert result.items[0].replay_eligible
     assert connection.execute(
-        "SELECT provider_season, ledger_mode, admitted, replay_eligible FROM competition_seasons"
-    ).fetchone() == (2024, "replay", False, True)
+        "SELECT cs.provider_season, cs.ledger_mode, cs.admitted, cs.replay_eligible, c.country "
+        "FROM competition_seasons cs JOIN competitions c USING (competition_id)"
+    ).fetchone() == (2024, "replay", False, True, "Testland")
     connection.close()
 
 

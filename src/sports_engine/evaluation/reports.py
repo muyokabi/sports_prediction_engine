@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import uuid
 from dataclasses import asdict, dataclass
@@ -49,6 +50,7 @@ class EvaluationCandidate:
     hyperparameters: dict[str, Any]
     calibration_method: str | None
     feature_columns: tuple[str, ...]
+    training_mode: str
 
 
 class WalkForwardEvaluator:
@@ -99,8 +101,9 @@ class WalkForwardEvaluator:
         all_targets: list[np.ndarray] = []
         all_probabilities: list[np.ndarray] = []
         all_test_indexes: list[np.ndarray] = []
+        all_fold_indexes: list[np.ndarray] = []
         fold_metrics: list[dict[str, Any]] = []
-        for fold in folds:
+        for fold_number, fold in enumerate(folds, start=1):
             probabilities = self._fit_predict(model_type, dataset.frame, fold.train, fold.test, candidate)
             observed = targets[fold.test]
             metrics = probability_metrics(observed, probabilities)
@@ -108,12 +111,14 @@ class WalkForwardEvaluator:
             all_targets.append(observed)
             all_probabilities.append(probabilities)
             all_test_indexes.append(fold.test)
+            all_fold_indexes.append(np.full(len(fold.test), fold_number, dtype=int))
         combined_targets = np.concatenate(all_targets)
         combined_probabilities = np.vstack(all_probabilities)
         aggregate: dict[str, Any] = probability_metrics(combined_targets, combined_probabilities)
         aggregate["folds"] = len(folds)
         aggregate["test_rows"] = len(combined_targets)
         combined_indexes = np.concatenate(all_test_indexes)
+        combined_fold_indexes = np.concatenate(all_fold_indexes)
         aggregate["probability_forensics"] = self._probability_forensics(
             dataset.frame,
             combined_indexes,
@@ -154,12 +159,13 @@ class WalkForwardEvaluator:
         if closing is not None:
             aggregate["closing_market"] = closing
         created_at = datetime.now(UTC)
-        payload = {
+        payload: dict[str, Any] = {
             "model_type": model_type,
             "candidate_version": candidate.version,
             "candidate_hyperparameters": candidate.hyperparameters,
             "candidate_calibration_method": candidate.calibration_method,
             "candidate_feature_columns": list(candidate.feature_columns),
+            "candidate_training_mode": candidate.training_mode,
             "dataset_id": dataset.dataset_id,
             "dataset_hash": dataset.dataset_hash,
             "fold_metrics": fold_metrics,
@@ -169,13 +175,42 @@ class WalkForwardEvaluator:
             "test_periods": test_size,
             "rolling_train_periods": rolling_train_periods,
         }
+        prediction_frame = pl.DataFrame(
+            {
+                "fixture_id": [str(dataset.frame["fixture_id"][int(index)]) for index in combined_indexes],
+                "prediction_timestamp": [
+                    dataset.frame["prediction_timestamp"][int(index)] for index in combined_indexes
+                ],
+                "fold": combined_fold_indexes,
+                "target": combined_targets,
+                "home_probability": combined_probabilities[:, 0],
+                "draw_probability": combined_probabilities[:, 1],
+                "away_probability": combined_probabilities[:, 2],
+            }
+        )
+        prediction_buffer = io.BytesIO()
+        prediction_frame.write_parquet(prediction_buffer, compression="zstd")
+        prediction_payload = prediction_buffer.getvalue()
+        payload["prediction_artifact"] = {
+            "rows": prediction_frame.height,
+            "sha256": hashlib.sha256(prediction_payload).hexdigest(),
+        }
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
         output_dir = dated_artifact_directory(self.output_dir, created_at)
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / f"{model_type}-{dataset.dataset_hash[:12]}-{digest}.json"
+        prediction_path = path.with_suffix(".predictions.parquet")
+        payload["prediction_artifact"]["path"] = str(prediction_path)
         if not path.exists():
+            prediction_path.write_bytes(prediction_payload)
             path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        self._persist_probability_scope_validations(model_type, dataset.dataset_hash, aggregate, path, created_at)
+        self._persist_probability_scope_validations(
+            model_type,
+            candidate.version,
+            aggregate,
+            path,
+            created_at,
+        )
         return EvaluationReport(
             model_type,
             dataset.dataset_id,
@@ -196,21 +231,26 @@ class WalkForwardEvaluator:
         fixture_ids = [str(frame["fixture_id"][int(index)]) for index in indexes]
         placeholders = ",".join("?" for _ in fixture_ids)
         rows = self.connection.execute(
-            "SELECT CAST(f.fixture_id AS VARCHAR), c.name FROM fixtures_current f "
+            "SELECT CAST(f.fixture_id AS VARCHAR), CAST(c.competition_id AS VARCHAR), c.name "
+            "FROM fixtures_current f "
             "JOIN competition_seasons cs USING (competition_season_id) "
             "JOIN competitions c USING (competition_id) "
             f"WHERE CAST(f.fixture_id AS VARCHAR) IN ({placeholders})",
             fixture_ids,
         ).fetchall()
-        competition_by_fixture = {str(row[0]): str(row[1]) for row in rows}
-        competitions = np.asarray([competition_by_fixture.get(value, "UNKNOWN") for value in fixture_ids])
+        competition_by_fixture = {str(row[0]): (str(row[1]), str(row[2])) for row in rows}
+        competition_ids = np.asarray(
+            [competition_by_fixture.get(value, ("UNKNOWN", "UNKNOWN"))[0] for value in fixture_ids]
+        )
+        competition_names = {str(row[1]): str(row[2]) for row in rows}
         by_competition: dict[str, Any] = {}
-        for competition in sorted(set(competitions)):
-            members = competitions == competition
+        for competition_id in sorted(set(competition_ids)):
+            members = competition_ids == competition_id
             if members.sum() < 30:
                 continue
             metrics = probability_metrics(targets[members], probabilities[members])
-            by_competition[competition] = {
+            by_competition[competition_id] = {
+                "competition_name": competition_names.get(competition_id, "UNKNOWN"),
                 "rows": int(members.sum()),
                 **{key: metrics[key] for key in ("log_loss", "brier", "rps", "expected_calibration_error")},
                 "probability_integrity": metrics["probability_integrity"],
@@ -228,7 +268,7 @@ class WalkForwardEvaluator:
         predicted = probabilities.argmax(axis=1)
         confidence = probabilities.max(axis=1)
         correct = predicted == targets
-        confidence_bands = []
+        confidence_bands: list[dict[str, Any]] = []
         for lower, upper in zip(np.arange(0.3, 1.0, 0.1), np.arange(0.4, 1.1, 0.1), strict=True):
             members = (confidence > lower) & (confidence <= upper)
             if members.any():
@@ -244,21 +284,87 @@ class WalkForwardEvaluator:
                         "calibration_gap": accuracy - mean_confidence,
                     }
                 )
-        material_gaps = [
-            item for item in confidence_bands if item["rows"] >= 50 and abs(item["calibration_gap"]) > 0.10
+        for item in confidence_bands:
+            band_rows = int(item["rows"])
+            lower_bound, upper_bound = self._wilson_interval(int(round(item["accuracy"] * band_rows)), band_rows)
+            item["observed_interval_95"] = {"lower": lower_bound, "upper": upper_bound}
+            item["statistically_resolved"] = not lower_bound <= item["mean_confidence"] <= upper_bound
+        material_top_gaps = [
+            item
+            for item in confidence_bands
+            if item["rows"] >= 50 and abs(item["calibration_gap"]) > 0.10 and item["statistically_resolved"]
+        ]
+        classwise_bands = self._classwise_equal_mass_calibration(targets, probabilities)
+        material_classwise_gaps = [
+            item
+            for bands in classwise_bands.values()
+            for item in bands
+            if item["rows"] >= 50 and abs(item["calibration_gap"]) > 0.10 and item["statistically_resolved"]
         ]
         integrity = probability_metrics(targets, probabilities)["probability_integrity"]
+        reasons = []
+        if material_top_gaps:
+            reasons.append("MATERIAL_TOP_CONFIDENCE_MISCALIBRATION")
+        if material_classwise_gaps:
+            reasons.append("MATERIAL_CLASSWISE_MISCALIBRATION")
         return {
-            "passed": bool(integrity["passed"]) and not material_gaps,
-            "reasons": ["MATERIAL_CONFIDENCE_BAND_MISCALIBRATION"] if material_gaps else [],
+            "passed": bool(integrity["passed"]) and not reasons,
+            "reasons": reasons,
             "confidence_bands": confidence_bands,
+            "classwise_equal_mass_bands": classwise_bands,
+            "calibration_materiality_policy": {
+                "minimum_rows": 50,
+                "minimum_absolute_gap": 0.10,
+                "requires_prediction_outside_wilson_95_interval": True,
+            },
             "competition_metrics_minimum_30_rows": by_competition,
         }
+
+    @staticmethod
+    def _wilson_interval(successes: int, rows: int, z: float = 1.959963984540054) -> tuple[float, float]:
+        if rows <= 0:
+            return 0.0, 1.0
+        proportion = successes / rows
+        denominator = 1.0 + z**2 / rows
+        centre = (proportion + z**2 / (2 * rows)) / denominator
+        radius = z * np.sqrt((proportion * (1 - proportion) + z**2 / (4 * rows)) / rows) / denominator
+        return max(0.0, float(centre - radius)), min(1.0, float(centre + radius))
+
+    @classmethod
+    def _classwise_equal_mass_calibration(
+        cls, targets: np.ndarray, probabilities: np.ndarray, maximum_bins: int = 10
+    ) -> dict[str, list[dict[str, Any]]]:
+        result: dict[str, list[dict[str, Any]]] = {}
+        for class_index, name in enumerate(("home", "draw", "away")):
+            order = np.argsort(probabilities[:, class_index], kind="stable")
+            bin_count = min(maximum_bins, max(1, len(order) // 50))
+            bands: list[dict[str, Any]] = []
+            for members in np.array_split(order, bin_count):
+                if not len(members):
+                    continue
+                predicted = float(probabilities[members, class_index].mean())
+                successes = int((targets[members] == class_index).sum())
+                observed = successes / len(members)
+                lower, upper = cls._wilson_interval(successes, len(members))
+                bands.append(
+                    {
+                        "rows": int(len(members)),
+                        "minimum_probability": float(probabilities[members, class_index].min()),
+                        "maximum_probability": float(probabilities[members, class_index].max()),
+                        "mean_probability": predicted,
+                        "observed_frequency": observed,
+                        "calibration_gap": observed - predicted,
+                        "observed_interval_95": {"lower": lower, "upper": upper},
+                        "statistically_resolved": not lower <= predicted <= upper,
+                    }
+                )
+            result[name] = bands
+        return result
 
     def _persist_probability_scope_validations(
         self,
         model_type: str,
-        dataset_hash: str,
+        model_version: str,
         aggregate: dict[str, Any],
         evaluation_path: Path,
         validated_at: datetime,
@@ -266,85 +372,75 @@ class WalkForwardEvaluator:
         """Bind chronological league reliability evidence to exact immutable model versions."""
         if model_type not in {"poisson", "dixon-coles"}:
             return
-        versions = [
-            str(row[0])
-            for row in self.connection.execute(
-                "SELECT version FROM model_runs WHERE model_type=? AND training_dataset_hash=? "
-                "AND status IN ('candidate','champion')",
-                [model_type, dataset_hash],
-            ).fetchall()
-        ]
-        if not versions:
-            return
         evidence_policy = load_evidence_policies()[model_type]
         forensics = aggregate.get("probability_forensics")
         forensic_payload = forensics if isinstance(forensics, dict) else {}
         competitions = forensic_payload.get("competition_metrics_minimum_30_rows")
         competition_metrics = competitions if isinstance(competitions, dict) else {}
-        for version in versions:
-            for competition, raw_metrics in competition_metrics.items():
-                metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
-                rows = int(metrics.get("rows") or 0)
-                reasons: list[str] = []
-                if rows < self.minimum_competition_rows:
-                    reasons.append("INSUFFICIENT_COMPETITION_EVALUATION_ROWS")
-                integrity = metrics.get("probability_integrity")
-                integrity_payload = integrity if isinstance(integrity, dict) else {}
-                if integrity_payload.get("passed") is not True:
-                    reasons.append("COMPETITION_PROBABILITY_INTEGRITY_FAILED")
-                ece = float(metrics.get("expected_calibration_error", 1.0))
-                if ece > self.maximum_competition_ece:
-                    reasons.append("COMPETITION_CALIBRATION_ECE_EXCEEDED")
-                uncertainty = metrics.get("metric_uncertainty")
-                uncertainty_payload = uncertainty if isinstance(uncertainty, dict) else {}
-                log_interval = uncertainty_payload.get("log_loss")
-                brier_interval = uncertainty_payload.get("brier")
-                log_upper = float(log_interval.get("upper", 1e9)) if isinstance(log_interval, dict) else 1e9
-                brier_upper = float(brier_interval.get("upper", 1e9)) if isinstance(brier_interval, dict) else 1e9
-                if log_upper > evidence_policy.maximum_log_loss:
-                    reasons.append("COMPETITION_LOG_LOSS_UNCERTAINTY_EXCEEDED")
-                if brier_upper > evidence_policy.maximum_brier:
-                    reasons.append("COMPETITION_BRIER_UNCERTAINTY_EXCEEDED")
-                state = (
-                    "VALIDATED"
-                    if not reasons
-                    else "INSUFFICIENT_SAMPLE"
-                    if reasons == ["INSUFFICIENT_COMPETITION_EVALUATION_ROWS"]
-                    else "FAILED"
+        for competition_id, raw_metrics in competition_metrics.items():
+            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+            rows = int(metrics.get("rows") or 0)
+            reasons: list[str] = []
+            if rows < self.minimum_competition_rows:
+                reasons.append("INSUFFICIENT_COMPETITION_EVALUATION_ROWS")
+            integrity = metrics.get("probability_integrity")
+            integrity_payload = integrity if isinstance(integrity, dict) else {}
+            if integrity_payload.get("passed") is not True:
+                reasons.append("COMPETITION_PROBABILITY_INTEGRITY_FAILED")
+            ece = float(metrics.get("expected_calibration_error", 1.0))
+            if ece > self.maximum_competition_ece:
+                reasons.append("COMPETITION_CALIBRATION_ECE_EXCEEDED")
+            uncertainty = metrics.get("metric_uncertainty")
+            uncertainty_payload = uncertainty if isinstance(uncertainty, dict) else {}
+            log_interval = uncertainty_payload.get("log_loss")
+            brier_interval = uncertainty_payload.get("brier")
+            log_upper = float(log_interval.get("upper", 1e9)) if isinstance(log_interval, dict) else 1e9
+            brier_upper = float(brier_interval.get("upper", 1e9)) if isinstance(brier_interval, dict) else 1e9
+            if log_upper > evidence_policy.maximum_log_loss:
+                reasons.append("COMPETITION_LOG_LOSS_UNCERTAINTY_EXCEEDED")
+            if brier_upper > evidence_policy.maximum_brier:
+                reasons.append("COMPETITION_BRIER_UNCERTAINTY_EXCEEDED")
+            state = (
+                "VALIDATED"
+                if not reasons
+                else "INSUFFICIENT_SAMPLE"
+                if reasons == ["INSUFFICIENT_COMPETITION_EVALUATION_ROWS"]
+                else "FAILED"
+            )
+            key = ":".join(
+                (
+                    model_version,
+                    "MATCH_ODDS",
+                    "COMPETITION",
+                    str(competition_id),
+                    self.probability_scope_policy_version,
+                    str(evaluation_path),
                 )
-                key = ":".join(
-                    (
-                        version,
-                        "MATCH_ODDS",
-                        "COMPETITION",
-                        str(competition),
-                        self.probability_scope_policy_version,
-                        str(evaluation_path),
-                    )
-                )
-                self.connection.execute(
-                    "INSERT INTO model_probability_scope_validations VALUES "
-                    "(?, ?, ?, 'MATCH_ODDS', 'COMPETITION', ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT (validation_id) DO UPDATE SET state=excluded.state, metrics=excluded.metrics, "
-                    "reason_codes=excluded.reason_codes, validated_at=excluded.validated_at",
-                    [
-                        str(uuid.uuid5(uuid.NAMESPACE_URL, f"sports-engine:probability-scope:{key}")),
-                        version,
-                        model_type,
-                        str(competition),
-                        state,
-                        self.probability_scope_policy_version,
-                        str(evaluation_path),
-                        rows,
-                        json.dumps(metrics),
-                        json.dumps(reasons),
-                        validated_at,
-                    ],
-                )
+            )
+            self.connection.execute(
+                "INSERT INTO model_probability_scope_validations VALUES "
+                "(?, ?, ?, 'MATCH_ODDS', 'COMPETITION', ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (validation_id) DO UPDATE SET state=excluded.state, metrics=excluded.metrics, "
+                "reason_codes=excluded.reason_codes, validated_at=excluded.validated_at",
+                [
+                    str(uuid.uuid5(uuid.NAMESPACE_URL, f"sports-engine:probability-scope:{key}")),
+                    model_version,
+                    model_type,
+                    str(competition_id),
+                    state,
+                    self.probability_scope_policy_version,
+                    str(evaluation_path),
+                    rows,
+                    json.dumps(metrics),
+                    json.dumps(reasons),
+                    validated_at,
+                ],
+            )
 
     def _candidate(self, model_type: str, dataset_hash: str) -> EvaluationCandidate:
         row = self.connection.execute(
-            "SELECT version, hyperparameters, calibration_method, artifact_path FROM model_runs "
+            "SELECT version, hyperparameters, calibration_method, artifact_path, "
+            "coalesce(training_mode, 'unknown') FROM model_runs "
             "WHERE model_type=? AND training_dataset_hash=? AND status IN ('candidate','champion') "
             "ORDER BY created_at DESC LIMIT 1",
             [model_type, dataset_hash],
@@ -361,7 +457,9 @@ class WalkForwardEvaluator:
             raise ValueError(f"Candidate feature manifest is invalid: {manifest_path}")
         if model_type not in {"elo", "poisson", "dixon-coles"} and not columns:
             raise ValueError(f"Candidate feature manifest is empty: {manifest_path}")
-        return EvaluationCandidate(str(row[0]), hyperparameters, str(row[2]) if row[2] else None, tuple(columns))
+        return EvaluationCandidate(
+            str(row[0]), hyperparameters, str(row[2]) if row[2] else None, tuple(columns), str(row[4])
+        )
 
     def _fit_predict(
         self,

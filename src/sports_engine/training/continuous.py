@@ -92,6 +92,7 @@ def run_due_ml_updates(
         exponential_half_life=config.features.exponential_half_life,
         prediction_lead_hours=config.features.prediction_lead_hours,
         historical_ledger_modes=config.models.historical_training_ledgers,
+        replay_universe_states=["ACTIONABLE"],
     ).build(dataset_name, ledger_mode=ledger_mode)
     trainer = ModelTrainer(
         connection,

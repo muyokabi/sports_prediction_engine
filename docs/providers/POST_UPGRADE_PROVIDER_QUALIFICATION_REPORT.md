@@ -1,6 +1,6 @@
 # Post-Upgrade Provider Qualification Report
 
-> Historical evidence only. It does not describe the 2026-10-11 warehouse or confer current production actionability. See `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+> Historical evidence only. It does not confer current production actionability. See `docs/reports/CURRENT_IMPLEMENTATION_STATUS.md`.
 
 Qualification date: 2026-10-07 (Africa/Nairobi)
 

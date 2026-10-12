@@ -12,7 +12,18 @@ console = Console()
 
 
 @app.command("build")
-def build(name: str = typer.Option("football-training"), as_json: bool = typer.Option(False, "--json")) -> None:
+def build(
+    name: str = typer.Option("football-training"),
+    as_json: bool = typer.Option(False, "--json"),
+    include_observation_leagues: bool = typer.Option(
+        False,
+        "--include-observation-leagues",
+        help=(
+            "Include discovery observation leagues in a research dataset; "
+            "production training uses ACTIONABLE leagues."
+        ),
+    ),
+) -> None:
     config = load_config()
     ledger_mode = "replay" if config.mode == ApplicationMode.DEVELOPMENT else "production"
     connection = open_database(config)
@@ -24,6 +35,7 @@ def build(name: str = typer.Option("football-training"), as_json: bool = typer.O
             exponential_half_life=config.features.exponential_half_life,
             prediction_lead_hours=config.features.prediction_lead_hours,
             historical_ledger_modes=config.models.historical_training_ledgers,
+            replay_universe_states=None if include_observation_leagues else ["ACTIONABLE"],
         ).build(name, ledger_mode=ledger_mode)
     except ValueError as exc:
         connection.close()

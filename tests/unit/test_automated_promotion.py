@@ -41,7 +41,7 @@ def _candidate(connection: object, tmp_path: Path, *, with_baseline: bool) -> st
         )
     )
     connection.execute(
-        "UPDATE model_runs SET evidence_state='PRODUCTION_ACTIONABLE' WHERE version=?",
+        "UPDATE model_runs SET evidence_state='PRODUCTION_ACTIONABLE', training_mode='full_refit' WHERE version=?",
         [version],
     )
     return version
@@ -87,6 +87,7 @@ def _report(tmp_path: Path) -> None:
         "aggregate_metrics": {
             "folds": 4,
             "test_rows": 300,
+            "probability_forensics": {"passed": True, "reasons": []},
             "metric_uncertainty": {
                 "log_loss": {"estimate": 0.90, "lower": 0.87, "upper": 0.94},
                 "brier": {"estimate": 0.55, "lower": 0.52, "upper": 0.58},
@@ -195,4 +196,101 @@ def test_promotion_rejects_walk_forward_report_from_another_candidate(tmp_path: 
     assert result.promoted_versions == ()
     assert result.withheld_versions == (version,)
     assert "WALK_FORWARD_REPORT_MISSING" in result.assessments[0].reasons
+    connection.close()
+
+
+def test_promotion_rejects_incremental_artifact_even_with_passing_report(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "incremental-protocol.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=False)
+    connection.execute("UPDATE model_runs SET training_mode='warm_start' WHERE version=?", [version])
+    _report(tmp_path)
+    config = AppConfig(
+        artifacts_dir=tmp_path,
+        models={
+            "promotion": {
+                "market_baseline_mode": "when_available",
+                "eligible_model_types": ["logistic"],
+            }
+        },
+    )
+
+    result = run_automated_promotion(connection, config)
+
+    assert result.promoted_versions == ()
+    assert "TRAINING_PROTOCOL_NOT_PROMOTION_ELIGIBLE" in result.assessments[0].reasons
+    assert result.assessments[0].gate_results["training_protocol"] == {
+        "passed": False,
+        "mode": "warm_start",
+        "eligible_modes": ["full_refit"],
+    }
+    connection.close()
+
+
+def test_promotion_rejects_explicit_probability_forensics_failure(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "forensics-failure.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=False)
+    _report(tmp_path)
+    path = next((tmp_path / "evaluation").glob("*.json"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["aggregate_metrics"]["probability_forensics"] = {
+        "passed": False,
+        "reasons": ["MATERIAL_CONFIDENCE_BAND_MISCALIBRATION"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    config = AppConfig(
+        artifacts_dir=tmp_path,
+        models={
+            "promotion": {
+                "market_baseline_mode": "when_available",
+                "eligible_model_types": ["logistic"],
+            }
+        },
+    )
+
+    result = run_automated_promotion(connection, config)
+
+    assert result.promoted_versions == ()
+    assert result.withheld_versions == (version,)
+    assert "PROBABILITY_FORENSICS_FAILED" in result.assessments[0].reasons
+    assert result.assessments[0].gate_results["probability_forensics"]["evidence"]["reasons"] == [
+        "MATERIAL_CONFIDENCE_BAND_MISCALIBRATION"
+    ]
+    connection.close()
+
+
+def test_reassessment_demotes_incumbent_when_forensics_later_fail(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "incumbent-reassessment.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=False)
+    _report(tmp_path)
+    config = AppConfig(
+        artifacts_dir=tmp_path,
+        models={
+            "promotion": {
+                "market_baseline_mode": "when_available",
+                "eligible_model_types": ["logistic"],
+            }
+        },
+    )
+    first = run_automated_promotion(connection, config, now=datetime(2026, 1, 3, tzinfo=UTC))
+    assert first.promoted_versions == (version,)
+
+    path = next((tmp_path / "evaluation").glob("*.json"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["aggregate_metrics"]["probability_forensics"] = {
+        "passed": False,
+        "reasons": ["MATERIAL_CONFIDENCE_BAND_MISCALIBRATION"],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    second = run_automated_promotion(connection, config, now=datetime(2026, 1, 4, tzinfo=UTC))
+
+    assert second.withheld_versions == (version,)
+    assert connection.execute("SELECT status FROM model_runs WHERE version=?", [version]).fetchone() == ("candidate",)
+    assert connection.execute("SELECT state FROM model_market_roles WHERE model_version=?", [version]).fetchone() == (
+        "CHALLENGER",
+    )
+    assert connection.execute("SELECT count(*) FROM model_market_roles WHERE state='CHAMPION'").fetchone() == (0,)
     connection.close()

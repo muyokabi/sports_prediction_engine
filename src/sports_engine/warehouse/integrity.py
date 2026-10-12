@@ -4,6 +4,8 @@ from pathlib import Path
 
 import duckdb
 
+from sports_engine.sports.football.quality.completeness import REQUIRED_COMPONENTS
+
 
 @dataclass(frozen=True, slots=True)
 class IntegrityIssue:
@@ -16,6 +18,8 @@ def audit_integrity(
     connection: duckdb.DuckDBPyConnection,
     artifact_root: Path | None = None,
 ) -> list[IntegrityIssue]:
+    required_components = ",".join(f"'{component}'" for component in REQUIRED_COMPONENTS)
+    required_count = len(REQUIRED_COMPONENTS)
     checks = {
         "orphan_fixtures": (
             "SELECT count(*) FROM fixtures f LEFT JOIN competition_seasons cs "
@@ -52,8 +56,10 @@ def audit_integrity(
         ),
         "inconsistent_ml_eligibility": (
             "SELECT count(*) FROM fixture_quality_status q WHERE q.eligibility='ML_ELIGIBLE' "
-            "AND EXISTS (SELECT 1 FROM fixture_completeness fc WHERE fc.fixture_id=q.fixture_id "
-            "AND fc.state<>'complete')"
+            "AND (EXISTS (SELECT 1 FROM fixture_completeness fc WHERE fc.fixture_id=q.fixture_id "
+            f"AND fc.component IN ({required_components}) AND fc.state<>'complete') "
+            "OR (SELECT count(*) FROM fixture_completeness fc WHERE fc.fixture_id=q.fixture_id "
+            f"AND fc.component IN ({required_components}) AND fc.state='complete')<>{required_count})"
         ),
         "unresolved_prediction_models": (
             "SELECT count(*) FROM prediction_runs pr LEFT JOIN model_runs mr "

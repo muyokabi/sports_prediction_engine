@@ -1,6 +1,6 @@
 # Institutional Scale and Continuous Learning Acceptance Report
 
-> Historical evidence only. It does not describe the current warehouse or registry; see `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+> Historical evidence only. It does not describe the current warehouse or registry; see `docs/reports/CURRENT_IMPLEMENTATION_STATUS.md`.
 
 Acceptance date: 2026-10-08 (Africa/Nairobi)
 

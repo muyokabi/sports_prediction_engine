@@ -16,10 +16,20 @@ from sports_engine.core.paths import project_root
 from sports_engine.core.telemetry import JobSummary
 from sports_engine.orchestration.locks import FileLock
 from sports_engine.orchestration.runner import job_run
-from sports_engine.sports.football.ingestion.backfill import BackfillPlanner, RequestCappedProvider
+from sports_engine.sports.football.ingestion.backfill import (
+    BackfillPlanner,
+    RequestCappedProvider,
+    reclassify_completed_results,
+)
 from sports_engine.sports.football.ingestion.coverage_gate import CoverageAuditService, SeasonCatalogService
 from sports_engine.sports.football.ingestion.daily_update import DailyUpdateService
 from sports_engine.sports.football.ingestion.detailed_matches import DetailedMatchIngestionService
+from sports_engine.sports.football.ingestion.discovery import (
+    DEFAULT_OBSERVATION_COLLECTION_LIMIT,
+    CompetitionDiscoveryService,
+    admit_observation_universe,
+    backfill_candidate_universe,
+)
 from sports_engine.sports.football.ingestion.injuries import InjuryIngestionService
 from sports_engine.sports.football.ingestion.odds import OddsIngestionService
 from sports_engine.sports.football.ingestion.reconciliation import FixtureReconciliationService
@@ -320,6 +330,18 @@ def fetch_backfill(
         max=5000,
         help="Hard cap for detailed backfill requests; coverage and fixture fetching are not included.",
     ),
+    league_limit: int = typer.Option(
+        40,
+        "--league-limit",
+        min=1,
+        max=200,
+        help="Maximum discovered leagues considered; admitted leagues are selected first.",
+    ),
+    discovery_enabled: bool = typer.Option(
+        True,
+        "--discovery/--no-discovery",
+        help="Refresh league discovery before coverage; disable only when resuming from persisted discovery.",
+    ),
     coverage_enabled: bool = typer.Option(
         True,
         "--coverage/--no-coverage",
@@ -344,8 +366,12 @@ def fetch_backfill(
     connection = open_database(config)
     summary = JobSummary()
     catalog_result = None
+    discovery_result = None
+    candidate_universe = _candidates()
     bootstrap_results = []
     backfill_result = None
+    reclassified_results = 0
+    detail_status = {"completed": 0, "eligible": 0, "pending_repair": 0, "unassessed": 0}
     label = f"last-{past_seasons}" if past_seasons is not None else str(exact_season or "current")
     try:
         with (
@@ -354,9 +380,14 @@ def fetch_backfill(
         ):
             with provider_client(config, connection) as client:
                 capabilities = client.get_status(purpose=f"fetch_backfill_status:{label}", job_run_id=run_id)
+                if discovery_enabled:
+                    discovery_result = CompetitionDiscoveryService(connection, client).run(job_run_id=run_id)
+                discovered_candidates = backfill_candidate_universe(connection, limit=league_limit)
+                if discovered_candidates:
+                    candidate_universe = discovered_candidates
                 if coverage_enabled:
                     catalog_result = SeasonCatalogService(connection, client).run(
-                        _candidates(),
+                        candidate_universe,
                         job_run_id=run_id,
                         current=not historical,
                         exact_season=exact_season,
@@ -387,6 +418,11 @@ def fetch_backfill(
                         bootstrap_results.append(result)
                         if not result.complete:
                             break
+                reclassified_results = reclassify_completed_results(
+                    connection,
+                    ledger_mode=ledger_mode,
+                    provider_seasons=selected_seasons if historical else None,
+                )
                 plan = BackfillPlanner(
                     connection,
                     client.quota_budget,
@@ -403,8 +439,29 @@ def fetch_backfill(
                         capped_client,
                         config.data_dir / "quarantine",
                     ).run(plan.fixture_ids, job_run_id=run_id)
-            if catalog_result is not None:
-                summary.requests_used = 1
+                season_parameters = list(selected_seasons)
+                season_filter = ""
+                if historical and season_parameters:
+                    placeholders = ",".join("?" for _ in season_parameters)
+                    season_filter = f"AND cs.provider_season IN ({placeholders}) "
+                detail_row = connection.execute(
+                    "SELECT count(*) FILTER (WHERE f.status_short IN ('FT','AET','PEN')), "
+                    "count(*) FILTER (WHERE q.eligibility='ML_ELIGIBLE'), "
+                    "count(*) FILTER (WHERE q.eligibility='PENDING_REPAIR'), "
+                    "count(*) FILTER (WHERE f.status_short IN ('FT','AET','PEN') AND q.fixture_id IS NULL) "
+                    "FROM fixtures_current f JOIN competition_seasons cs USING (competition_season_id) "
+                    "LEFT JOIN fixture_quality_status q USING (fixture_id) WHERE cs.ledger_mode=? "
+                    f"{season_filter}",
+                    [ledger_mode, *season_parameters],
+                ).fetchone()
+                if detail_row is not None:
+                    detail_status = {
+                        "completed": int(detail_row[0]),
+                        "eligible": int(detail_row[1]),
+                        "pending_repair": int(detail_row[2]),
+                        "unassessed": int(detail_row[3]),
+                    }
+            summary.requests_used = int(discovery_result is not None) + int(catalog_result is not None)
             summary.fixtures_discovered = sum(result.fixtures_written for result in bootstrap_results)
             summary.fixtures_updated = summary.fixtures_discovered
             for result in bootstrap_results:
@@ -412,6 +469,12 @@ def fetch_backfill(
                     summary.warnings.append(result.blocked_reason or "season bootstrap stopped before completion")
             summary.fixtures_enriched = backfill_result.fixtures_eligible if backfill_result else 0
             summary.fixtures_quarantined = backfill_result.fixtures_quarantined if backfill_result else 0
+            outstanding = detail_status["pending_repair"] + detail_status["unassessed"]
+            if outstanding:
+                summary.warnings.append(
+                    f"optional historical detail remains incomplete for {outstanding} completed fixtures; "
+                    "completed scores remain available to the statistical models"
+                )
     except ProviderUnavailableError as exc:
         console.print(
             "[yellow]API-Football is temporarily unreachable after retries. "
@@ -438,12 +501,22 @@ def fetch_backfill(
     )
     console.print(
         f"Fetch + backfill: ledger={ledger_mode} season={label} coverage={coverage_text} "
+        f"discovered={discovery_result.discovered if discovery_result else 'persisted'} "
+        f"league_universe={len(candidate_universe)} "
         f"bootstrap=({bootstrap_text}) candidates={plan.candidate_count} "
         f"request_budget={plan.request_budget} selected={len(plan.fixture_ids)} "
+        f"locally_reclassified={reclassified_results} "
         f"eligible={backfill_result.fixtures_eligible if backfill_result else 0} "
         f"quarantined={backfill_result.fixtures_quarantined if backfill_result else 0} "
+        f"detail_coverage={detail_status['eligible']}/{detail_status['completed']} "
+        f"pending_repair={detail_status['pending_repair']} unassessed={detail_status['unassessed']} "
         f"daily_remaining_at_start={capabilities.daily_remaining}."
     )
+    if detail_status["pending_repair"] or detail_status["unassessed"]:
+        console.print(
+            "[yellow]The requested seasons and completed scores are registered for modelling. Optional "
+            "match enrichment is incomplete; rerunning is not required for score-model training.[/]"
+        )
 
 
 @app.command("enrich")
@@ -523,6 +596,19 @@ def daily(
         ):
             with provider_client(config, connection) as client:
                 capabilities = client.get_status(purpose="daily_status", job_run_id=run_id)
+                discovery_result = (
+                    CompetitionDiscoveryService(connection, client).run(job_run_id=run_id)
+                    if ledger_mode == "production"
+                    else None
+                )
+                observation_admitted = (
+                    admit_observation_universe(
+                        connection,
+                        limit=DEFAULT_OBSERVATION_COLLECTION_LIMIT,
+                    )
+                    if ledger_mode == "production"
+                    else []
+                )
                 eligibility = "replay_eligible" if ledger_mode == "replay" else "admitted"
                 registered = connection.execute(
                     f"SELECT count(*) FROM competition_seasons WHERE ledger_mode=? "
@@ -614,6 +700,8 @@ def daily(
                 backfill_result.fixtures_quarantined if backfill_result else 0
             )
             summary.odds_snapshots_written = odds_result.snapshots_written if odds_result else 0
+            if odds_result and odds_result.blocked_reason:
+                summary.warnings.append(odds_result.blocked_reason)
             settlement_result = settle_completed_predictions(connection)
             shadow_settlement_result = settle_shadow_opportunities(connection)
             refresh_performance_rollups(connection)
@@ -662,6 +750,8 @@ def daily(
         f"Football daily: plan={capabilities.subscription_plan} "
         f"daily_remaining={capabilities.daily_remaining} minute_remaining={capabilities.minute_remaining} "
         f"date={operational_date} discovered={result.relevant_fixtures} "
+        f"catalog_discovered={discovery_result.discovered if discovery_result else 0} "
+        f"observation_admitted={len(observation_admitted)} "
         f"completed={result.completed_candidates} enriched={result.enrichment.fixtures_eligible} "
         f"quarantined={result.enrichment.fixtures_quarantined} "
         f"backfill={backfill_result.fixtures_eligible if backfill_result else 0} "

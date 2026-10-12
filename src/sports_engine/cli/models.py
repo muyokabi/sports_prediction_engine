@@ -40,6 +40,14 @@ def train_historical(
         "--assess-promotions/--no-assess-promotions",
         help="Run fail-closed promotion assessment after training and evaluation.",
     ),
+    include_observation_leagues: bool = typer.Option(
+        False,
+        "--include-observation-leagues",
+        help=(
+            "Train a research candidate on discovery observation leagues too; "
+            "excluded from production training by default."
+        ),
+    ),
 ) -> None:
     """Full-refit model candidates from the current ledger plus replay history."""
     from sports_engine.training.historical import train_historical_models
@@ -60,6 +68,7 @@ def train_historical(
                 dataset_name=dataset_name,
                 rolling_periods=rolling_periods,
                 assess_promotions=assess_promotions,
+                include_observation_leagues=include_observation_leagues,
             )
     except (OSError, RuntimeError, ValueError) as exc:
         console.print(f"[red]{exc}[/]")
@@ -73,7 +82,8 @@ def train_historical(
     console.print(
         f"Historical training: dataset={result.dataset_name} rows={result.dataset_rows} "
         f"replay_rows={result.replay_rows} trained={len(trained)}/{len(result.models)} "
-        f"promoted={len(promoted)} withheld={len(withheld)}"
+        f"promoted={len(promoted)} withheld={len(withheld)} "
+        f"paired_comparison={result.comparison_path or 'not-applicable'}"
     )
     for item in result.models:
         if item.error:

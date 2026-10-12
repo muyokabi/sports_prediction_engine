@@ -37,9 +37,14 @@ DEFAULT_RETRAINING_POLICIES = {
     "elo": RetrainingPolicy(1, timedelta(days=1), "full_refit"),
     "poisson": RetrainingPolicy(20, timedelta(days=7), "full_refit"),
     "dixon-coles": RetrainingPolicy(20, timedelta(days=7), "full_refit"),
-    "logistic": RetrainingPolicy(40, timedelta(days=14), "warm_start"),
-    "catboost": RetrainingPolicy(60, timedelta(days=14), "warm_start"),
-    "lightgbm": RetrainingPolicy(60, timedelta(days=14), "warm_start"),
+    # Full refits are intentionally the automatic policy for ML models. The
+    # training set is small enough for CPU refits, while appending a complete
+    # 300-tree learner to batches of roughly 50 observations caused model size
+    # to grow without bound and degraded chronological holdout scores. Manual
+    # warm-start candidates remain available for controlled experiments.
+    "logistic": RetrainingPolicy(40, timedelta(days=14), "full_refit"),
+    "catboost": RetrainingPolicy(60, timedelta(days=14), "full_refit"),
+    "lightgbm": RetrainingPolicy(60, timedelta(days=14), "full_refit"),
 }
 
 

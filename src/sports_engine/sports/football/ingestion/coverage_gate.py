@@ -231,7 +231,11 @@ class CoverageAuditService:
                 )
                 checkpoints.put(self.connection, checkpoint_key, index + 1, job_run_id)
                 continue
-            league = rows[0]["league"]
+            country = rows[0].get("country") or {}
+            league = {
+                **rows[0]["league"],
+                "country": country.get("name") or rows[0]["league"].get("country"),
+            }
             seasons = [
                 season
                 for season in rows[0].get("seasons", [])

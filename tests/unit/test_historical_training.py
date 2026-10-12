@@ -46,6 +46,7 @@ def test_historical_training_builds_once_and_full_refits_selected_models(
     class Builder:
         def __init__(self, *_args: object, **kwargs: object) -> None:
             calls["history"] = kwargs["historical_ledger_modes"]
+            calls["universe_states"] = kwargs["replay_universe_states"]
 
         def build(self, name: str, *, ledger_mode: str) -> SimpleNamespace:
             calls["dataset"] = (name, ledger_mode)
@@ -71,10 +72,15 @@ def test_historical_training_builds_once_and_full_refits_selected_models(
         calls["promoted"] = kwargs["versions"]
         return SimpleNamespace(promoted_versions=(), withheld_versions=kwargs["versions"])
 
+    def compare(paths: list[Path], output_dir: Path, *, random_seed: int) -> Path:
+        calls["compared"] = (paths, output_dir, random_seed)
+        return output_dir / "comparison.json"
+
     monkeypatch.setattr("sports_engine.training.historical.PointInTimeFeatureBuilder", Builder)
     monkeypatch.setattr("sports_engine.training.historical.ModelTrainer", Trainer)
     monkeypatch.setattr("sports_engine.training.historical.WalkForwardEvaluator", Evaluator)
     monkeypatch.setattr("sports_engine.training.historical.run_automated_promotion", promote)
+    monkeypatch.setattr("sports_engine.training.historical.compare_evaluation_reports", compare)
 
     result = train_historical_models(
         Connection(2400),  # type: ignore[arg-type]
@@ -89,6 +95,7 @@ def test_historical_training_builds_once_and_full_refits_selected_models(
     assert result.dataset_rows == 2400
     assert result.replay_rows == 2400
     assert calls["history"] == ["replay"]
+    assert calls["universe_states"] == ["ACTIONABLE"]
     assert calls["dataset"] == ("five-seasons", "production")
     assert calls["trained"] == [
         (
@@ -109,10 +116,16 @@ def test_historical_training_builds_once_and_full_refits_selected_models(
         ),
     ]
     assert calls["promoted"] == ("elo-candidate", "logistic-candidate")
+    assert calls["compared"] == (
+        [tmp_path / "elo.json", tmp_path / "logistic.json"],
+        tmp_path / "artifacts" / "evaluation" / "comparisons",
+        7,
+    )
+    assert result.comparison_path == tmp_path / "artifacts" / "evaluation" / "comparisons" / "comparison.json"
 
 
-def test_historical_training_requires_ml_eligible_replay_rows(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="No ML-eligible replay fixtures"):
+def test_historical_training_requires_completed_replay_rows(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="No completed replay results"):
         train_historical_models(
             Connection(0),  # type: ignore[arg-type]
             _config(tmp_path),  # type: ignore[arg-type]

@@ -1,0 +1,11 @@
+{
+  "content_hash": "57641a3286dad5dcd6f5239961c101cdecf4a68b2865b0016a9cbfd25db29110",
+  "endpoint": "/players/squads",
+  "http_status": 200,
+  "job_run_id": null,
+  "parameters": {
+    "team": 39
+  },
+  "quota": {},
+  "retrieved_at_utc": "2026-01-01T00:00:00+00:00"
+}

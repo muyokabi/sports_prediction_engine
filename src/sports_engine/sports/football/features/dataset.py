@@ -34,6 +34,7 @@ class PointInTimeFeatureBuilder:
         exponential_half_life: float,
         prediction_lead_hours: int,
         historical_ledger_modes: list[str] | None = None,
+        replay_universe_states: list[str] | None = None,
     ) -> None:
         if not windows or any(window < 1 for window in windows):
             raise ValueError("At least one positive feature window is required")
@@ -43,6 +44,7 @@ class PointInTimeFeatureBuilder:
         self.half_life = exponential_half_life
         self.prediction_lead = timedelta(hours=prediction_lead_hours)
         self.historical_ledger_modes = tuple(dict.fromkeys(historical_ledger_modes or ()))
+        self.replay_universe_states = tuple(dict.fromkeys(replay_universe_states or ()))
 
     def build(self, name: str, *, ledger_mode: str) -> FeatureDatasetArtifact:
         training_modes = self._training_modes(ledger_mode)
@@ -279,6 +281,18 @@ class PointInTimeFeatureBuilder:
 
     def _matches(self, ledger_modes: tuple[str, ...]) -> list[dict[str, Any]]:
         placeholders = ",".join("?" for _ in ledger_modes)
+        universe_clause = ""
+        parameters = list(ledger_modes)
+        if self.replay_universe_states:
+            state_placeholders = ",".join("?" for _ in self.replay_universe_states)
+            universe_clause = (
+                "AND (cs.ledger_mode<>'replay' OR EXISTS ("
+                "SELECT 1 FROM competition_discoveries cd "
+                "JOIN competition_seasons discovered_cs USING (competition_season_id) "
+                "WHERE discovered_cs.competition_id=cs.competition_id "
+                f"AND cd.universe_state IN ({state_placeholders}))) "
+            )
+            parameters.extend(self.replay_universe_states)
         rows = self.connection.execute(
             "SELECT CAST(f.fixture_id AS VARCHAR), f.kickoff_utc, "
             "CAST(f.home_team_id AS VARCHAR), CAST(f.away_team_id AS VARCHAR), "
@@ -293,16 +307,17 @@ class PointInTimeFeatureBuilder:
             "a.passes_percentage, a.fouls, a.yellow_cards, a.red_cards, "
             "hp.player_rating, ap.player_rating "
             "FROM fixtures_current f JOIN competition_seasons cs USING (competition_season_id) "
-            "JOIN fixture_quality_status q USING (fixture_id) "
-            "JOIN team_match_statistics h ON h.fixture_id=f.fixture_id AND h.team_id=f.home_team_id "
-            "JOIN team_match_statistics a ON a.fixture_id=f.fixture_id AND a.team_id=f.away_team_id "
+            "LEFT JOIN team_match_statistics h ON h.fixture_id=f.fixture_id AND h.team_id=f.home_team_id "
+            "LEFT JOIN team_match_statistics a ON a.fixture_id=f.fixture_id AND a.team_id=f.away_team_id "
             "LEFT JOIN (SELECT fixture_id, team_id, avg(rating) player_rating FROM player_match_statistics "
             "GROUP BY fixture_id, team_id) hp ON hp.fixture_id=f.fixture_id AND hp.team_id=f.home_team_id "
             "LEFT JOIN (SELECT fixture_id, team_id, avg(rating) player_rating FROM player_match_statistics "
             "GROUP BY fixture_id, team_id) ap ON ap.fixture_id=f.fixture_id AND ap.team_id=f.away_team_id "
-            f"WHERE cs.ledger_mode IN ({placeholders}) AND q.eligibility='ML_ELIGIBLE' "
+            f"WHERE cs.ledger_mode IN ({placeholders}) "
+            f"{universe_clause}"
+            "AND f.status_short IN ('FT','AET','PEN') "
             "AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL ORDER BY f.kickoff_utc",
-            list(ledger_modes),
+            parameters,
         ).fetchall()
         result: list[dict[str, Any]] = []
         for row in rows:
@@ -506,6 +521,7 @@ class PointInTimeFeatureBuilder:
         config = {
             "ledger_mode": ledger_mode,
             "training_ledger_modes": list(training_modes),
+            "replay_universe_states": list(self.replay_universe_states),
             "windows": self.windows,
             "exponential_half_life": self.half_life,
             "prediction_lead_hours": self.prediction_lead.total_seconds() / 3600,

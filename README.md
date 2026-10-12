@@ -127,7 +127,7 @@ The canonical write path is `immutable raw response -> validated envelope -> nor
 - [`uv`](https://docs.astral.sh/uv/) for environment and command execution.
 - API-Football v3 credentials for live collection. Offline analysis and normal tests need no network.
 
-### Install
+### Fresh-clone setup, in order
 
 ```powershell
 git clone https://github.com/muyokabi/sports_prediction_engine.git
@@ -139,15 +139,45 @@ Copy-Item .env.example .env
 Set `API_FOOTBALL_KEY=replace-with-your-key` in `.env`. Never commit secrets.
 
 ```powershell
+# 1. Create/upgrade the warehouse and verify local configuration.
 uv run sports-engine data migrate
-uv run sports-engine doctor
+uv run sports-engine doctor --connectivity --verify-current-season
 uv run sports-engine data integrity
+
+# 2. Discover the provider catalog, select a governed 40-league collection
+#    universe, fetch each league's latest five completed seasons, and enrich it.
+#    This is resumable but can run for hours and consume substantial quota.
+uv run sports-engine football fetch-backfill --past-seasons 5 --max-requests 5000
+
+# 3. Build one current + replay dataset and evaluate all supported models.
+uv run sports-engine models train-historical
+
+# 4. Run the normal live workflow and produce tomorrow's research report.
+uv run sports-engine run --date tomorrow
 ```
 
-### Produce an analysis
+`fetch-backfill` performs discovery automatically. A fresh clone does **not**
+need separate `leagues discover`, coverage, bootstrap, or detailed-backfill
+commands before this sequence. The default is a bounded 40-league collection
+universe: already admitted leagues first, followed by the strongest observation
+candidates. Observation collection does not make a league betting-actionable.
+
+If the historical setup is interrupted, rerun the identical command. Use
+`--no-discovery`, `--no-coverage`, or `--no-bootstrap` only for deliberate
+checkpoint recovery, not for the first run.
+
+The request cap is a real ceiling, not a promise that five seasons across 40
+leagues will fit into 5,000 calls. The command now prints
+`detail_coverage`, `pending_repair`, and `unassessed`. A successful run means
+its bounded tranche completed safely; if either outstanding count is non-zero,
+rerun the same command to continue. Fixture skeletons can cover all five
+seasons while detailed ML-eligible packages are still incomplete.
+
+### Normal use after setup
 
 ```powershell
-# Complete live run
+# Complete live run; discovery, current fixtures, odds, settlement, due model
+# maintenance, pricing, and reporting are orchestrated automatically.
 uv run sports-engine run --date tomorrow
 uv run sports-engine run --date today
 
@@ -173,7 +203,7 @@ These live commands are autonomous: preflight, catch-up, settlement, ledger repa
 
 A live `run` selects only an audited market-role champion. Promotion requires probability integrity, chronological holdout and walk-forward uncertainty, calibration, fixture applicability, competition-specific validation, and incumbent quality. A timestamp-correct bookmaker baseline is compared whenever API-Football supplied enough historical snapshots; its absence is recorded as unavailable rather than falsely interpreted as model failure. Every assessment is persisted with gate evidence and reason codes.
 
-### Occasional maintenance — run separately
+### Occasional diagnostics — run separately
 
 Do not chain these to the daily prediction command. Run them in a separate terminal session only after the prior command has finished.
 
@@ -195,14 +225,6 @@ uv run sports-engine models reliability --json
 # Only when intentionally adding depth from an already registered replay season;
 # keep the request cap explicit and run one season at a time
 uv run sports-engine football historical-backfill --season 2023 --max-requests 250
-
-# Register/fetch the five latest completed seasons for every selected league,
-# then backfill completed fixtures within an explicit request budget
-uv run sports-engine football fetch-backfill --past-seasons 5 --max-requests 5000
-
-# After the historical backfill has produced ML-eligible completed fixtures,
-# full-refit and evaluate every supported model on current + replay history
-uv run sports-engine models train-historical
 
 # Before upgrades or major maintenance
 $backup = 'D:\sports-engine-backups\YYYY-MM-DD'
@@ -246,7 +268,7 @@ uv run sports-engine api capabilities
 uv run sports-engine api capabilities --json
 ```
 
-### League discovery and admission
+### League discovery and admission inspection
 
 ```powershell
 uv run sports-engine leagues discover
@@ -256,7 +278,11 @@ uv run sports-engine football coverage audit
 uv run sports-engine football coverage audit --json
 ```
 
-Admission is explicit. A discoverable competition is not automatically production/model eligible.
+The principal live workflow automatically fills a bounded 40-league observation
+collection universe after discovery. That admission permits fixture and odds
+collection only: it does not make a competition production/model actionable.
+These specialist commands are for inspection or an intentional collection
+override, not prerequisites for the normal workflow.
 
 ### Football ingestion, repair, and quality
 
@@ -295,12 +321,17 @@ uv run sports-engine football quality --json
 uv run sports-engine football quality-soak --leagues 3 --fixtures-per-league 2
 ```
 
-`football fetch-backfill` is the one-command seasonal ingestion workflow. With no
+`football fetch-backfill` is the one-command seasonal ingestion workflow. It
+first refreshes the provider's current league catalog, then selects up to 40
+governed candidates: admitted leagues first and the highest-scoring observation
+leagues next. This expands historical evidence without silently promoting an
+observation league to production actionability. With no
 historical selector, it targets the configured current ledger (production in the
 default configuration). Supplying `--season YYYY` or `--past-seasons N` safely
 targets the replay ledger so historical data cannot expand the live production
-fixture universe. The multi-season path reads API-Football's `/leagues` catalog
-once, selects completed seasons independently for each configured league, applies
+fixture universe. After discovery, the multi-season path reads API-Football's
+historical `/leagues` catalog once, selects completed seasons independently for
+each selected league, applies
 that season's coverage flags, and then fetches teams and fixtures for every
 qualified league-season. Its flags are:
 
@@ -309,20 +340,27 @@ qualified league-season. Its flags are:
 | `--season YYYY` | current | Fetch and enrich one historical season in the replay ledger |
 | `--past-seasons N` | unset | Fetch the latest 1–10 completed seasons for every selected league; cannot be combined with `--season` |
 | `--max-requests N` | `1000` | Cap detailed enrichment requests to 1–5000; coverage and skeleton fetching are separate |
+| `--league-limit N` | `40` | Bound the discovered collection universe to 1–200 leagues; admitted leagues rank first |
+| `--discovery` / `--no-discovery` | `--discovery` | Refresh the current provider catalog; skip only when resuming from persisted discovery |
 | `--coverage` / `--no-coverage` | `--coverage` | Run or skip competition coverage qualification |
 | `--bootstrap` / `--no-bootstrap` | `--bootstrap` | Run or skip team and fixture-skeleton fetching |
 
-The command is checkpointed and idempotent. Rerun the identical command after a
-quota stop or a transient network/DNS failure; completed league-season work is
-not downloaded again, and a fixture-stage interruption resumes at that stage.
-Use the skip flags only when that phase already completed or when intentionally
-resuming a later phase.
+The command is checkpointed and idempotent. Completed scores become immediately
+available to Elo, Poisson, Dixon-Coles, and ML training after the season fixture
+bootstrap. Event, lineup, team-statistic, and player-statistic payloads are
+optional enrichment tiers: missing detail is preserved as missing and never
+causes a per-fixture repair request or blocks a valid completed result. Batched
+`/fixtures?ids=...` calls collect whatever enrichment API-Football actually
+supplies. Rerun after a quota stop or transient network/DNS failure only when
+you want to finish that optional enrichment; score-model training does not need
+the enrichment pass to be complete.
 
 API-Football identifies a season by its starting year, so the command does not
 derive five years by subtracting from the calendar year. It uses each league's
 returned season list and excludes the entry marked `current`. Historical fixture,
 event, lineup, team-statistic, and player-statistic data can be backfilled when
-the season advertises that coverage. Historical pre-match odds cannot be
+available. Provider season coverage flags are planning hints, not guarantees
+that every fixture contains every component. Historical pre-match odds cannot be
 reconstructed: API-Football retains `/odds` observations for only seven days, so
 the daily workflow must collect and preserve them prospectively.
 
@@ -331,6 +369,8 @@ the daily workflow must collect and preserve them prospectively.
 ```powershell
 uv run sports-engine features build --name football-training
 uv run sports-engine features build --name football-training --json
+# Explicit research dataset containing discovered observation leagues too
+uv run sports-engine features build --name expanded-research --include-observation-leagues
 
 uv run sports-engine train --model elo
 uv run sports-engine train --model poisson
@@ -346,6 +386,7 @@ uv run sports-engine models train-historical
 uv run sports-engine models train-historical --model lightgbm
 uv run sports-engine models train-historical --rolling-periods 100
 uv run sports-engine models train-historical --no-assess-promotions
+uv run sports-engine models train-historical --include-observation-leagues --no-assess-promotions
 
 # Dataset selection and validation-holdout calibration
 uv run sports-engine train --model logistic --dataset football-training
@@ -365,8 +406,12 @@ and forces immutable full-refit candidates rather than waiting for the daily
 retraining schedule. All six model families are trained by default. Each
 successful candidate is walk-forward evaluated, ML models receive Platt
 calibration, and the normal fail-closed promotion assessment runs after the
-suite. A failed model is reported without discarding successful candidates from
-the same run.
+suite. The command also writes an exact paired out-of-fold comparison across
+successful candidates. Production training includes only `ACTIONABLE` leagues;
+discovered `OBSERVATION` leagues remain collected but cannot dilute a production
+candidate until they graduate. Use `--include-observation-leagues` only for an
+explicit research experiment. A failed model is reported without discarding
+successful candidates from the same run.
 
 | Flag | Default | Meaning |
 |---|---:|---|
@@ -374,6 +419,7 @@ the same run.
 | `--dataset-name NAME` | timestamped | Set the immutable feature-dataset name |
 | `--rolling-periods N` | expanding | Use the latest N periods for each walk-forward training window |
 | `--assess-promotions` / `--no-assess-promotions` | `--assess-promotions` | Run or skip audited promotion assessment after evaluation |
+| `--include-observation-leagues` | off | Include observation leagues in a research dataset; production training is ACTIONABLE-only |
 
 Training is local and consumes no API quota. It does not repair incomplete
 historical fixtures: rerun `football fetch-backfill` first if the command reports

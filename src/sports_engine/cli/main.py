@@ -42,6 +42,9 @@ def run_analysis(
     offline: bool = typer.Option(False, "--offline", help="Use persisted data without provider calls."),
 ) -> None:
     """Collect fresh requested-date odds, reconcile the universe, and report."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
     from sports_engine.analysis.dates import resolve_analysis_dates
     from sports_engine.analysis.service import AnalysisService
     from sports_engine.cli.runtime import open_database, provider_client
@@ -61,6 +64,7 @@ def run_analysis(
     config = load_config()
     requested = resolve_analysis_dates(target_date, timezone=config.timezone, days=days)
     learning = None
+    daily_odds_date = None
     if not offline:
         from sports_engine.cli.doctor import run_doctor
         from sports_engine.cli.football import daily as football_daily
@@ -70,6 +74,7 @@ def run_analysis(
         # The principal command owns routine catch-up, enrichment, repair,
         # surplus backfill, settlement, feature feedback, and prediction work.
         learning = football_daily(as_of=None)
+        daily_odds_date = datetime.now(ZoneInfo(config.timezone)).date() + timedelta(days=config.odds.target_days_ahead)
     connection = open_database(config)
     ledger_mode = "replay" if config.mode == ApplicationMode.DEVELOPMENT else "production"
     odds_payloads = odds_snapshots = unmatched = 0
@@ -81,7 +86,10 @@ def run_analysis(
         ):
             if learning:
                 summary.warnings.extend(learning.errors)
-            if not offline and ledger_mode == "production":
+            additional_odds_dates = tuple(
+                analysis_date for analysis_date in requested.dates if analysis_date != daily_odds_date
+            )
+            if not offline and ledger_mode == "production" and additional_odds_dates:
                 with provider_client(config, connection) as client:
                     client.get_status(purpose="institutional_run_status", job_run_id=run_id)
                     odds_service = OddsIngestionService(
@@ -89,7 +97,7 @@ def run_analysis(
                         client,
                         dedupe_seconds=config.odds.snapshot_dedupe_seconds,
                     )
-                    for analysis_date in requested.dates:
+                    for analysis_date in additional_odds_dates:
                         fixture_count = connection.execute(
                             "SELECT count(*) FROM fixtures_current f JOIN competition_seasons cs "
                             "USING (competition_season_id) WHERE cs.ledger_mode=? AND cs.admitted "
@@ -127,6 +135,13 @@ def run_analysis(
                 job_run_id=run_id,
                 report_mode="OFFLINE_REPLAY" if offline else "LIVE",
             )
+            reference_row = connection.execute(
+                "SELECT count(DISTINCT i.target_fixture_id) FROM institutional_predictions i "
+                "JOIN institutional_opportunities o USING (prediction_id) "
+                "WHERE CAST(i.analysis_run_id AS VARCHAR)=? AND o.latest_reference_odds IS NOT NULL",
+                [result.analysis_run_id],
+            ).fetchone()
+            reference_fixtures = int(reference_row[0]) if reference_row else 0
             integrity_issues = audit_integrity(connection)
             if integrity_issues:
                 summary.errors.extend(f"{issue.check}={issue.count}" for issue in integrity_issues)
@@ -135,8 +150,9 @@ def run_analysis(
         connection.close()
     typer.echo(
         f"Analysis {result.analysis_run_id}: {result.state}; expected={result.expected_fixtures}; "
-        f"terminal={result.terminal_fixtures}; odds_payloads={odds_payloads}; "
-        f"odds_snapshots={odds_snapshots}; unmatched_odds_fixtures={unmatched}; report={result.report_path}"
+        f"terminal={result.terminal_fixtures}; reference_fixtures={reference_fixtures}; "
+        f"additional_odds_payloads={odds_payloads}; additional_odds_snapshots={odds_snapshots}; "
+        f"unmatched_odds_fixtures={unmatched}; report={result.report_path}"
         f"; settled_predictions={settlement.predictions_settled}; "
         f"settled_shadow={shadow_settlement.opportunities_settled}; "
         f"ml_due={len(learning.due_models) if learning else 0}; "
@@ -191,9 +207,15 @@ def evaluate(
     all_models: bool = typer.Option(False, "--all"),
     dataset: str | None = typer.Option(None, help="Feature dataset ID or name; latest when omitted."),
     rolling_periods: int | None = typer.Option(None, min=1, help="Use a rolling training window."),
+    compare: bool = typer.Option(
+        True,
+        "--compare/--no-compare",
+        help="Write paired out-of-fold comparisons when evaluating multiple models.",
+    ),
 ) -> None:
     from sports_engine.cli.runtime import open_database
     from sports_engine.core.config import load_config
+    from sports_engine.evaluation.comparison import compare_evaluation_reports
     from sports_engine.evaluation.reports import WalkForwardEvaluator
     from sports_engine.models.registry import MODEL_TYPES
 
@@ -212,13 +234,22 @@ def evaluate(
         maximum_competition_ece=config.models.promotion.maximum_competition_expected_calibration_error,
     )
     try:
+        reports = []
         for model_type in MODEL_TYPES if all_models else (model,):
             assert model_type is not None
             report = evaluator.evaluate(model_type, dataset_name=dataset, rolling_train_periods=rolling_periods)
+            reports.append(report)
             typer.echo(
                 f"{model_type}: folds={len(report.fold_metrics)} "
                 f"log-loss={report.aggregate_metrics['log_loss']:.6f} report={report.path}"
             )
+        if compare and len(reports) > 1:
+            comparison = compare_evaluation_reports(
+                [item.path for item in reports],
+                config.artifacts_dir / "evaluation" / "comparisons",
+                random_seed=config.models.random_seed,
+            )
+            typer.echo(f"paired-comparison={comparison}")
     except ValueError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc

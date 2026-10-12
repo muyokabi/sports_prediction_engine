@@ -1,3 +1,5 @@
 maximum_goals: 10
-decay_rate: 0.001
-l2_penalty: 0.001
+l2_penalty_candidates: [3.0, 10.0]
+half_life_days_candidates: [180.0, 365.0, 730.0]
+selection_metric: log_loss
+selection_protocol: chronological_validation

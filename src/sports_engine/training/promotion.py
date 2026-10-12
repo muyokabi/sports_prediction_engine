@@ -52,14 +52,17 @@ def run_automated_promotion(
     policy = config.models.promotion
     if not policy.enabled:
         return PromotionCycleResult((), (), (), ())
-    parameters: list[Any] = [*PROMOTION_MODEL_TYPES]
+    parameters: list[Any] = [policy.market_family, *PROMOTION_MODEL_TYPES]
     version_clause = ""
     if versions:
         version_clause = f" AND version IN ({','.join('?' for _ in versions)})"
         parameters.extend(versions)
     rows = connection.execute(
-        "SELECT version, model_type, metrics, calibration_method, training_dataset_hash, evidence_state "
-        f"FROM model_runs WHERE status='candidate' AND model_type IN "
+        "SELECT version, model_type, metrics, calibration_method, training_dataset_hash, evidence_state, "
+        "coalesce(training_mode, 'unknown') "
+        "FROM model_runs WHERE (status='candidate' OR (status='champion' AND EXISTS ("
+        "SELECT 1 FROM model_market_roles r WHERE r.model_version=model_runs.version "
+        "AND r.market_family=? AND r.state='CHAMPION'))) AND model_type IN "
         f"({','.join('?' for _ in PROMOTION_MODEL_TYPES)})"
         f"{version_clause} ORDER BY created_at",
         parameters,
@@ -75,6 +78,7 @@ def run_automated_promotion(
             calibration_method=str(row[3]) if row[3] else None,
             dataset_hash=str(row[4]),
             evidence_state=str(row[5]) if row[5] else None,
+            training_mode=str(row[6]),
             assessed_at=now or datetime.now(UTC),
         )
         for row in rows
@@ -100,12 +104,21 @@ def _assess_candidate(
     calibration_method: str | None,
     dataset_hash: str,
     evidence_state: str | None,
+    training_mode: str,
     assessed_at: datetime,
 ) -> PromotionAssessment:
     report_path, report = _latest_report(evaluation_dir, model_type, dataset_hash, version)
     aggregate = _mapping(report.get("aggregate_metrics")) if report else {}
     evidence_policy = load_evidence_policies()[model_type]
     reasons: list[str] = []
+
+    # Walk-forward reports reconstruct a fresh candidate for every historical
+    # fold. They are valid promotion evidence for full refits, but cannot prove
+    # the behaviour of an incrementally extended tree ensemble. Keep manual
+    # warm starts available as research artifacts and fail them closed here.
+    training_protocol_passed = training_mode == "full_refit"
+    if not training_protocol_passed:
+        reasons.append("TRAINING_PROTOCOL_NOT_PROMOTION_ELIGIBLE")
 
     deployment_model_passed = model_type in policy.eligible_model_types
     if not deployment_model_passed:
@@ -178,6 +191,13 @@ def _assess_candidate(
         uncertainty_passed = False
         reasons.append("FOLD_CALIBRATION_UNSTABLE")
 
+    probability_forensics = _mapping(aggregate.get("probability_forensics"))
+    probability_forensics_passed = probability_forensics.get("passed") is True
+    if not probability_forensics:
+        reasons.append("PROBABILITY_FORENSICS_MISSING")
+    elif not probability_forensics_passed:
+        reasons.append("PROBABILITY_FORENSICS_FAILED")
+
     uncertainty_adjustment = _uncertainty_adjustment(policy, calibrated_ece, log_interval)
     if uncertainty_adjustment > policy.maximum_uncertainty_adjustment:
         uncertainty_passed = False
@@ -216,6 +236,11 @@ def _assess_candidate(
         reasons.append("INCUMBENT_NOT_OUTPERFORMED")
 
     gates: dict[str, Any] = {
+        "training_protocol": {
+            "passed": training_protocol_passed,
+            "mode": training_mode,
+            "eligible_modes": ["full_refit"],
+        },
         "deployment_model": {
             "passed": deployment_model_passed,
             "model_type": model_type,
@@ -236,6 +261,10 @@ def _assess_candidate(
             "metric_intervals": uncertainty,
             "maximum_fold_ece": max(fold_eces) if fold_eces else None,
             "expected_return_adjustment": uncertainty_adjustment,
+        },
+        "probability_forensics": {
+            "passed": probability_forensics_passed,
+            "evidence": probability_forensics,
         },
         "market_baseline": {
             "passed": baseline_passed,
@@ -369,6 +398,18 @@ def _persist_assessment(
                 )
             role_state = "CHAMPION"
         else:
+            # Incumbents are reassessed on every cycle. If newer evidence or a
+            # stricter policy invalidates an incumbent, fail closed immediately
+            # rather than leaving a stale champion available to prediction code.
+            connection.execute(
+                "UPDATE model_market_roles SET state='RESEARCH_ONLY', selected_at=? "
+                "WHERE market_family=? AND role_name=? AND model_version=? AND state='CHAMPION'",
+                [assessed_at, assessment.market_family, role_name, assessment.version],
+            )
+            connection.execute(
+                "UPDATE model_runs SET status='candidate' WHERE version=? AND status='champion'",
+                [assessment.version],
+            )
             role_state = "CHALLENGER"
         connection.execute(
             "INSERT INTO model_market_roles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "

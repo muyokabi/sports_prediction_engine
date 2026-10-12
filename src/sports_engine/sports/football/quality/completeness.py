@@ -3,9 +3,16 @@ from typing import Any
 
 from sports_engine.core.enums import CompletenessState, Eligibility
 
+# A completed result is the minimum trustworthy modelling record.  The
+# remaining components are enrichment tiers: useful when present, but API-
+# Football's season-level coverage flags do not guarantee them for each match.
+# Keeping optional enrichment in this tuple previously caused one player/stats
+# request per fixture and discarded valid score-model observations.
 REQUIRED_COMPONENTS = (
     "fixture_metadata",
     "final_score",
+)
+ENRICHMENT_COMPONENTS = (
     "events",
     "goalscorers",
     "assists",

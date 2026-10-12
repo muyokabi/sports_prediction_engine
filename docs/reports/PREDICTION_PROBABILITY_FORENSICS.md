@@ -1,6 +1,6 @@
 # Prediction Probability Forensics
 
-> Historical evidence only. Current models have no validated production probability scopes; see `docs/audits/CURRENT_SYSTEM_BASELINE.md`.
+> Historical evidence only. See `docs/reports/CURRENT_IMPLEMENTATION_STATUS.md` for current model governance.
 
 Date: 2026-10-10 (Africa/Nairobi)
 

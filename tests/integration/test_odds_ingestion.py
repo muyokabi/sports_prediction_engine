@@ -169,14 +169,15 @@ def test_odds_service_consumes_all_pages_and_skips_unknown_fixtures(tmp_path: Pa
     connection.close()
 
 
-def test_odds_service_scopes_requests_to_scheduled_admitted_leagues(tmp_path: Path) -> None:
+@pytest.mark.parametrize("universe_state", ["ACTIONABLE", "OBSERVATION"])
+def test_odds_service_scopes_requests_to_scheduled_governed_leagues(tmp_path: Path, universe_state: str) -> None:
     connection = _database(tmp_path)
     season_id = connection.execute("SELECT competition_season_id FROM competition_seasons").fetchone()[0]
     connection.execute(
         "INSERT INTO competition_discoveries VALUES "
-        "(?, 'api_football', 39, 2026, ?, 'League', 'England', 'League', 'ACTIONABLE', "
+        "(?, 'api_football', 39, 2026, ?, 'League', 'England', 'League', ?, "
         "1, 0, 1, '{}', 1, 1, 1, 0, 1, '[]', 1, NULL, ?)",
-        [str(uuid.uuid4()), season_id, datetime.now(UTC)],
+        [str(uuid.uuid4()), season_id, universe_state, datetime.now(UTC)],
     )
     requested: list[Mapping[str, Any]] = []
 
@@ -200,6 +201,25 @@ def test_odds_service_scopes_requests_to_scheduled_admitted_leagues(tmp_path: Pa
     ).run(date(2026, 10, 8), ledger_mode="production", timezone="UTC")
     assert requested == [{"date": "2026-10-08", "league": 39, "season": 2026}]
     assert result.snapshots_written == 1
+    assert result.request_scopes == 1
+    assert result.blocked_reason is None
+    connection.close()
+
+
+def test_odds_service_exposes_empty_governed_scope_instead_of_silently_skipping(tmp_path: Path) -> None:
+    connection = _database(tmp_path)
+
+    class Provider:
+        def get_all_pages(self, *args: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
+            raise AssertionError("provider must not be called without a governed competition scope")
+
+    result = OddsIngestionService(connection, Provider()).run(
+        date(2026, 10, 8), ledger_mode="production", timezone="UTC"
+    )
+
+    assert result.request_scopes == 0
+    assert result.payloads_seen == 0
+    assert result.blocked_reason == "NO_GOVERNED_COMPETITION_SCOPE"
     connection.close()
 
 

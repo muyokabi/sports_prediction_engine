@@ -1,0 +1,64 @@
+{
+  "comparisons": [
+    {
+      "candidate_model_type": "candidate",
+      "candidate_version": "candidate-version",
+      "comparator_model_type": "comparator",
+      "comparator_version": "comparator-version",
+      "paired_loss_difference_candidate_minus_comparator": {
+        "brier": {
+          "estimate": -0.606666666666667,
+          "lower": -0.606666666666667,
+          "method": "chronological-block-bootstrap(block_size=7)",
+          "samples": 2000,
+          "upper": -0.606666666666667
+        },
+        "log_loss": {
+          "estimate": -0.8754687373539001,
+          "lower": -0.8754687373539001,
+          "method": "chronological-block-bootstrap(block_size=7)",
+          "samples": 2000,
+          "upper": -0.8754687373539001
+        },
+        "rps": {
+          "estimate": -0.20222222222222228,
+          "lower": -0.20980555555555558,
+          "method": "chronological-block-bootstrap(block_size=7)",
+          "samples": 2000,
+          "upper": -0.19463888888888894
+        }
+      },
+      "rows": 60,
+      "verdict": "CANDIDATE_DOMINATES"
+    }
+  ],
+  "created_at": "2026-10-12T13:22:55.712085+00:00",
+  "dataset_hash": "same-dataset-hash",
+  "interpretation": "Dominance requires the 95% chronological block-bootstrap interval to favour one model for log loss, Brier, and RPS on the same fixtures.",
+  "models": [
+    {
+      "aggregate_metrics": {
+        "brier": 0.6,
+        "expected_calibration_error": 0.02,
+        "log_loss": 1.0,
+        "rps": 0.2
+      },
+      "candidate_version": "candidate-version",
+      "model_type": "candidate",
+      "report_path": "C:\\Users\\JOSHUA_X\\Music\\sports_prediction_engine\\.tmp\\pytest-final\\test_paired_comparison_uses_id0\\candidate.json",
+      "training_mode": "full_refit"
+    },
+    {
+      "aggregate_metrics": {
+        "brier": 0.6,
+        "expected_calibration_error": 0.02,
+        "log_loss": 1.0,
+        "rps": 0.2
+      },
+      "candidate_version": "comparator-version",
+      "model_type": "comparator",
+      "report_path": "C:\\Users\\JOSHUA_X\\Music\\sports_prediction_engine\\.tmp\\pytest-final\\test_paired_comparison_uses_id0\\comparator.json",
+      "training_mode": "full_refit"
+    }
+  ]
+}

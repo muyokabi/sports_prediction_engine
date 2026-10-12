@@ -41,15 +41,27 @@ def complete_participants(first_player_id: int) -> tuple[list[dict[str, object]]
     return lineup, players
 
 
-def test_incomplete_match_is_not_ml_eligible() -> None:
+def test_completed_result_is_eligible_without_optional_enrichment() -> None:
     assessment = assess_match_package(
         {
             "fixture": {"id": 1, "date": "2026-01-01", "status": {"short": "FT"}},
             "goals": {"home": 1, "away": 0},
         }
     )
+    assert assessment.eligibility == Eligibility.ML_ELIGIBLE
+    assert assessment.missing == ()
+    assert assessment.components["events"].value == "incomplete"
+
+
+def test_missing_final_score_is_not_eligible() -> None:
+    assessment = assess_match_package(
+        {
+            "fixture": {"id": 1, "date": "2026-01-01", "status": {"short": "FT"}},
+            "goals": {"home": None, "away": 0},
+        }
+    )
     assert assessment.eligibility == Eligibility.PENDING_REPAIR
-    assert "events" in assessment.missing
+    assert assessment.missing == ("final_score",)
 
 
 def test_full_embedded_package_is_eligible() -> None:
@@ -75,7 +87,7 @@ def test_full_embedded_package_is_eligible() -> None:
     assert assess_match_package(payload).eligibility == Eligibility.ML_ELIGIBLE
 
 
-def test_unknown_mandatory_statistic_is_not_treated_as_zero() -> None:
+def test_unknown_optional_statistic_is_preserved_as_incomplete_without_blocking_result() -> None:
     payload = {
         "fixture": {"id": 1, "date": "2026-01-01", "status": {"short": "FT"}},
         "goals": {"home": 0, "away": 0},
@@ -99,5 +111,7 @@ def test_unknown_mandatory_statistic_is_not_treated_as_zero() -> None:
         ],
     }
     assessment = assess_match_package(payload)
-    assert assessment.eligibility == Eligibility.PENDING_REPAIR
-    assert "away_team_stats" in assessment.missing
+    assert assessment.eligibility == Eligibility.ML_ELIGIBLE
+    assert assessment.missing == ()
+    assert assessment.components["home_team_stats"].value == "incomplete"
+    assert assessment.components["away_team_stats"].value == "incomplete"

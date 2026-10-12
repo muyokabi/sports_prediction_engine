@@ -148,7 +148,10 @@ class DailyUpdateService:
         )
         end = operational_date + timedelta(days=1)
         if start > end:
-            return DailyUpdateResult((), 0, 0, 0, DetailedIngestionResult(True, 0, 0, 0, 0))
+            # Schedules and statuses can change after the checkpoint was
+            # written. Re-fetch the prediction horizon on same-day reruns so
+            # newly admitted competitions and fixture changes are not missed.
+            start = end
         dates: list[date] = []
         cursor = start
         while cursor <= end and len(dates) < maximum_dates:

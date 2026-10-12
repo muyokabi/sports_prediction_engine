@@ -1,0 +1,14 @@
+{
+  "content_hash": "1d3a0600e25d0ea744f8052b9ba7c00192b5736fcabcc4411c4901e7ae98261d",
+  "endpoint": "/fixtures",
+  "http_status": 200,
+  "job_run_id": null,
+  "parameters": {},
+  "quota": {
+    "daily_limit": null,
+    "daily_remaining": null,
+    "minute_limit": null,
+    "minute_remaining": null
+  },
+  "retrieved_at_utc": "2026-10-12T13:12:20.576720+00:00"
+}
