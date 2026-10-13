@@ -8,7 +8,11 @@ import duckdb
 import polars as pl
 
 from sports_engine.core.ids import canonical_id
-from sports_engine.markets.implied_probability import no_vig_probabilities, raw_implied_probability
+from sports_engine.markets.implied_probability import (
+    no_vig_double_chance_probabilities,
+    no_vig_probabilities,
+    raw_implied_probability,
+)
 from sports_engine.markets.overround import overround
 from sports_engine.markets.taxonomy import persist_observed_api_football_markets
 from sports_engine.sports.football.domain.odds import OddsPrice
@@ -80,10 +84,20 @@ def store_odds_snapshot(
     price_rows: dict[tuple[object, object, object, object], list[object]] = {}
     for group in groups.values():
         decimal = [price.decimal_odds for price in group]
-        fair: list[float | None] = (
-            [float(value) for value in no_vig_probabilities(decimal)] if len(decimal) >= 2 else [None] * len(decimal)
-        )
-        margin = overround(decimal) if len(decimal) >= 2 else None
+        provider_market_id = group[0].provider_market_id
+        fair: list[float | None]
+        margin: float | None
+        if provider_market_id == 12 and len(decimal) == 3:
+            fair = [float(value) for value in no_vig_double_chance_probabilities(decimal)]
+            # Relative book factor: a fair double-chance book has raw mass 2.
+            margin = sum(raw_implied_probability(value) for value in decimal) / 2
+        else:
+            fair = (
+                [float(value) for value in no_vig_probabilities(decimal)]
+                if len(decimal) >= 2 and provider_market_id != 12
+                else [None] * len(decimal)
+            )
+            margin = overround(decimal) if len(decimal) >= 2 and provider_market_id != 12 else None
         for index, price in enumerate(group):
             bookmaker_id = canonical_id("bookmaker", "api_football", price.provider_bookmaker_id)
             market_id = canonical_id("market", "api_football", price.provider_market_id)

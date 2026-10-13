@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from sports_engine.evaluation.reports import WalkForwardEvaluator
+from sports_engine.models.ml.logistic import LogisticProbabilityModel
 from sports_engine.models.registry import ModelRegistry
 from sports_engine.training.trainer import ModelTrainer
 from sports_engine.warehouse.connection import connect
@@ -97,13 +98,16 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     assert manifest["feature_quality_audit"]["candidate_features"] > len(manifest["feature_columns"])
     assert manifest["feature_quality_audit"]["features"]["bookmaker_home_fair"]["selection_status"] == "CONSTANT"
     assert json.loads(row[3])["bookmaker_baseline"]["rows"] == 6
-    if model_type in {"elo", "poisson", "dixon-coles"}:
-        deployment = json.loads(row[3])["deployment_refit"]
-        assert deployment["performed"] is True
-        cutoff = connection.execute(
-            "SELECT training_cutoff FROM model_runs WHERE version=?", [result.version]
-        ).fetchone()[0]
-        assert cutoff == datetime(2025, 1, 30, tzinfo=UTC)
+    deployment = json.loads(row[3])["deployment_refit"]
+    assert deployment["performed"] is True
+    assert deployment["deployment_rows"] == 30
+    cutoff = connection.execute("SELECT training_cutoff FROM model_runs WHERE version=?", [result.version]).fetchone()[
+        0
+    ]
+    assert cutoff == datetime(2025, 1, 30, tzinfo=UTC)
+    if model_type == "logistic":
+        deployed = LogisticProbabilityModel.load(result.artifact_path)
+        assert deployed.estimator.named_steps["scale"].n_samples_seen_ == 30
     connection.close()
 
 

@@ -61,5 +61,20 @@
     "terminal_fixture_count": 6,
     "state": "COMPLETE",
     "report_mode": "LIVE"
+  },
+  "independent_prechange_capture_2026_10_14": {
+    "schema_version": 33,
+    "competitions": 1241,
+    "teams": 1046,
+    "fixtures": 69542,
+    "quality_assessed_ml_eligible": 23850,
+    "odds_snapshots": 76,
+    "fixtures_with_odds": 38,
+    "model_runs": 65,
+    "institutional_predictions": 161,
+    "institutional_opportunities": 6496,
+    "integrity_unqualified_production_opportunities": 3,
+    "active_champions": 0,
+    "backup_manifest": "artifacts/backups/2026-10-14-pre-append-only-governance/backup_manifest.json"
   }
 }

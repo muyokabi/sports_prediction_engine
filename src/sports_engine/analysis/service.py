@@ -16,6 +16,7 @@ from sports_engine.markets.pricing import CoreMarketPrices
 from sports_engine.markets.reference import ReferenceQuote, ReferenceState, classify_reference, summarize_references
 from sports_engine.markets.score_distribution import ScoreDistribution
 from sports_engine.markets.settlement import SettlementDistribution
+from sports_engine.markets.taxonomy import canonical_selection
 from sports_engine.models.applicability import ApplicabilityAssessment, assess_score_model_applicability
 from sports_engine.models.registry import MODEL_TYPES
 from sports_engine.models.statistical.dixon_coles import DixonColesModel
@@ -295,14 +296,21 @@ class AnalysisService:
             "AND m.model_type IN ('poisson','dixon-coles') ORDER BY r.selected_at DESC LIMIT 1"
         ).fetchone()
         if not row:
-            # Preserve research output before the first audited role is granted,
-            # but never mistake the newest challenger for the execution model.
+            # Preserve research fair prices before the first audited market
+            # role is granted.  The opportunity layer separately requires the
+            # exact champion role, calibration, scope, margin, uncertainty and
+            # applicability evidence before it can label anything production
+            # actionable.
             row = self.connection.execute(
                 "SELECT model_type, version, status, artifact_path, training_dataset_hash, training_cutoff, metrics, "
                 "hyperparameters FROM model_runs "
-                "WHERE status IN ('champion','candidate') AND evidence_state='PRODUCTION_ACTIONABLE' "
+                "WHERE status IN ('champion','candidate') AND evidence_state IN "
+                "('RESEARCH_TRAINABLE','VALIDATION_ELIGIBLE','PRODUCTION_CANDIDATE','PRODUCTION_ACTIONABLE') "
                 "AND model_type IN ('poisson','dixon-coles') "
-                "ORDER BY training_cutoff DESC NULLS LAST, (status='champion') DESC, created_at DESC LIMIT 1"
+                "ORDER BY CASE evidence_state "
+                "WHEN 'PRODUCTION_ACTIONABLE' THEN 4 WHEN 'PRODUCTION_CANDIDATE' THEN 3 "
+                "WHEN 'VALIDATION_ELIGIBLE' THEN 2 ELSE 1 END DESC, "
+                "training_cutoff DESC NULLS LAST, (status='champion') DESC, created_at DESC LIMIT 1"
             ).fetchone()
         if not row:
             return None
@@ -484,8 +492,9 @@ class AnalysisService:
             try:
                 if market == "ASIAN_HANDICAP" and selection in {"HOME", "AWAY"}:
                     line = float(line_key)
-                    # The provider's line is expressed from the home-team
-                    # perspective even on the away selection.
+                    # Captured API-Football payloads repeat the home-team line
+                    # on both selections (for example HOME -1/AWAY -1). The
+                    # away selection therefore receives the inverse handicap.
                     selected_line = line if selection == "HOME" else -line
                     settlement = prices.asian_handicap(selected_line, selection.casefold())
                 elif market == "TOTAL_GOALS" and selection in {"OVER", "UNDER"}:
@@ -958,9 +967,8 @@ class AnalysisService:
         quote_rows = self.connection.execute(
             "WITH priced AS (SELECT o.snapshot_id, o.fixture_id, o.observed_at, o.provider_update_time, "
             "o.source_raw_path, o.job_run_id, p.bookmaker_id, p.market_id, p.selection_id, p.decimal_odds, "
-            "p.raw_implied_probability / sum(p.raw_implied_probability) OVER "
-            "(PARTITION BY o.snapshot_id, p.bookmaker_id, p.market_id, coalesce(s.line, '')) fair_probability "
-            "FROM odds_snapshots o JOIN odds_prices p USING (snapshot_id) JOIN bet_selections s USING (selection_id)) "
+            "p.fair_probability "
+            "FROM odds_snapshots o JOIN odds_prices p USING (snapshot_id)) "
             "SELECT CAST(p.fixture_id AS VARCHAR), cm.canonical_market, upper(s.normalized_name), "
             "coalesce(s.line, ''), CAST(p.snapshot_id AS VARCHAR), CAST(b.bookmaker_id AS VARCHAR), b.name, "
             "CAST(m.market_id AS VARCHAR), CAST(s.selection_id AS VARCHAR), p.decimal_odds, "
@@ -973,7 +981,8 @@ class AnalysisService:
             [observed],
         ).fetchall()
         for row in quote_rows:
-            key = (str(row[0]), str(row[1]), str(row[2]), str(row[3]))
+            market = str(row[1])
+            key = (str(row[0]), market, canonical_selection(market, str(row[2])), str(row[3]))
             self._reference_quote_cache.setdefault(key, []).append(
                 ReferenceQuote(
                     str(row[4]),
@@ -1028,11 +1037,15 @@ class AnalysisService:
             "o.reference_state, CASE WHEN o.decision='PRICE_TARGET' THEN o.decision "
             "ELSE coalesce(o.governance_state, o.decision) END, o.reference_snapshot_count, "
             "o.reference_price_movement, "
-            "o.bookmaker_dispersion, o.execution_edge, o.reason_codes FROM institutional_opportunities o "
+            "o.bookmaker_dispersion, o.execution_edge, o.reason_codes, "
+            "coalesce(pa.applicability_state, 'OUT_OF_DOMAIN'), "
+            "coalesce(pa.applicability_level, 'OUT_OF_DOMAIN') FROM institutional_opportunities o "
             "JOIN institutional_predictions i USING (prediction_id) JOIN fixtures_current f "
             "ON f.fixture_id=i.target_fixture_id JOIN competition_seasons cs USING (competition_season_id) "
             "JOIN competitions c USING (competition_id) JOIN teams h ON h.team_id=f.home_team_id "
-            "JOIN teams a ON a.team_id=f.away_team_id WHERE CAST(i.analysis_run_id AS VARCHAR)=? "
+            "JOIN teams a ON a.team_id=f.away_team_id "
+            "LEFT JOIN prediction_applicability pa USING (prediction_id) "
+            "WHERE CAST(i.analysis_run_id AS VARCHAR)=? "
             "ORDER BY CASE coalesce(o.governance_state, o.decision) "
             "WHEN 'PRODUCTION_ACTIONABLE' THEN 0 WHEN 'SHADOW_ACTIONABLE' THEN 1 ELSE 2 END, "
             "o.reference_observed_at DESC NULLS LAST, o.robust_estimated_edge DESC NULLS LAST, "
@@ -1066,6 +1079,8 @@ class AnalysisService:
                 bookmaker_dispersion=float(row[22]) if row[22] is not None else None,
                 execution_edge=float(row[23]) if row[23] is not None else None,
                 reasons=tuple(json.loads(row[24])) if row[24] else (),
+                applicability_state=str(row[25]),
+                applicability_level=str(row[26]),
             )
             for index, row in enumerate(rows, start=1)
         )

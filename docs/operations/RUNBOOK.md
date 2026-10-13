@@ -37,8 +37,13 @@ uv run sports-engine football quality --summary --detailed
 uv run sports-engine features build --name replay-acceptance
 uv run sports-engine train --model logistic --dataset replay-acceptance --calibration platt
 uv run sports-engine evaluate --model logistic --dataset replay-acceptance
-uv run sports-engine models reliability
+uv run sports-engine models list --json
+uv run sports-engine models assess-promotions --json
 ```
+
+`models reliability` is a champion-only diagnostic. The audited system currently
+has no champion, so that command correctly exits with status 2; it is not a
+replay-acceptance prerequisite.
 
 Historical replay odds may be unavailable even when current-season odds are accessible. This blocks replay market benchmarking, not current production collection or offline pipeline validation. Accumulate detailed historical packages in bounded tranches with `sports-engine football historical-backfill --season 2024 --max-requests 250`; configured replay history augments chronological training without changing the production prediction universe.
 
@@ -62,7 +67,8 @@ The daily workflow reads `daily_discovery:<ledger>` and catches up every unproce
 uv run sports-engine football quality --summary
 uv run sports-engine football quality --detailed
 uv run sports-engine data integrity
-uv run sports-engine models reliability
+uv run sports-engine models list --json
+uv run sports-engine models assess-promotions --json
 uv run sports-engine api quota
 ```
 
@@ -82,6 +88,42 @@ Automated production promotion requires both hashes and fails closed with
 `ARTIFACT_INTEGRITY_NOT_VERIFIED`; legacy hashless artifacts remain research-only compatibility.
 Digest verification detects replacement but does not make pickle safe for untrusted provenance,
 so pickle files must never be accepted from an untrusted source.
+
+Promotion assessments and `model_market_role_events` are append-only governance evidence. Never
+update or delete an older assessment/event to make the current projection look consistent. A
+production opportunity must be validated against the latest role event and supporting evidence
+that existed at or before its creation time. Before any production-ledger migration, create and
+verify a backup; a faithful backup may correctly preserve known integrity findings from the source.
+
+The HTML `Top Research` table is informational. It orders applicability tier before the conservative
+`model probability - uncertainty buffer` index and keeps one selection per fixture, capped at ten.
+Do not interpret this section as expected value, a confidence interval, operator odds, or permission
+to place a bet. Inspect its applicability label and the full audit row before using it in research.
+
+## Generated-file cleanup
+
+The daily workflow runs generated-file cleanup at most once every 24 hours and
+removes only allowlisted, regenerable development/test debris older than seven
+days. Inspect or run it explicitly with:
+
+```powershell
+uv run sports-engine data cleanup
+uv run sports-engine data cleanup --apply
+uv run sports-engine data cleanup --apply --older-than-days 0
+```
+
+The first command is a dry run. The zero-day override is intended for deliberate
+one-off cleanup after tests, not routine scheduling. Configuration lives under
+`cleanup` in `config/app.yaml`; completion state is recorded in
+`state/generated-cleanup.json`.
+
+The allowlist is limited to pytest run directories in `.tmp/` and `state/`,
+standard Python test/type/lint caches, coverage output, `__pycache__` under
+`src/` and `tests/`, and explicitly named `artifacts/test-tmp` or
+`artifacts/build-final` directories. Cleanup never targets `data/raw`, the
+warehouse, Parquet datasets, quarantine evidence, models, evaluations,
+backtests, reports, backups, checkpoints, active locks, or operational logs.
+`logs/sports-engine.log` already uses size-based rotation (10 MiB, five backups).
 
 `SHADOW_ACTIONABLE` means eligible for prospective paper tracking only. The default bootstrap policy accepts fresh
 `MATCH_ODDS`, `BTTS`, and `TOTAL_GOALS` references from structurally fitted, actionable competitions, then caps output at
@@ -104,8 +146,9 @@ Review eligible yield, quarantines, and remaining daily quota after every tranch
 ## Backup and restore verification
 
 ```powershell
-uv run sports-engine data backup D:\sports-engine-backups\2026-10-07
-uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-07
+$backup = 'D:\sports-engine-backups\YYYY-MM-DD'
+uv run sports-engine data backup $backup
+uv run sports-engine data verify-backup $backup
 ```
 
 Verification opens the copied DuckDB in isolation, checks the current schema and table row counts, and hashes every copied raw/config/Parquet/model file. Never restore over the live database. To recover, stop scheduled jobs, verify the backup, copy it to a new project directory, update configuration paths if necessary, then run `doctor` and `data integrity` there before switching schedules.

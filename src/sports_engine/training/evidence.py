@@ -70,8 +70,7 @@ def assess_model_evidence(
     team_count = len(set(frame["home_team_id"].to_list()) | set(frame["away_team_id"].to_list()))
     features = feature_columns or []
     normalized_features = {
-        name: frame[name].fill_nan(None) if frame.schema[name].is_float() else frame[name]
-        for name in features
+        name: frame[name].fill_nan(None) if frame.schema[name].is_float() else frame[name] for name in features
     }
     informative_features = [name for name, series in normalized_features.items() if series.drop_nulls().n_unique() > 1]
     missing = (

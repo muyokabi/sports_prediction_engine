@@ -389,4 +389,13 @@ def test_reassessment_demotes_incumbent_when_forensics_later_fail(tmp_path: Path
         "CHALLENGER",
     )
     assert connection.execute("SELECT count(*) FROM model_market_roles WHERE state='CHAMPION'").fetchone() == (0,)
+    assert connection.execute(
+        "SELECT state FROM model_promotion_assessments WHERE model_version=? ORDER BY assessed_at",
+        [version],
+    ).fetchall() == [("PROMOTED",), ("WITHHELD",)]
+    assert connection.execute(
+        "SELECT state, event_type FROM model_market_role_events "
+        "WHERE model_version=? ORDER BY occurred_at",
+        [version],
+    ).fetchall() == [("CHAMPION", "PROMOTED"), ("CHALLENGER", "WITHHELD")]
     connection.close()

@@ -64,6 +64,10 @@ class MarketQuote:
     bookmaker: str | None = None
     provider_updated_at: datetime | None = None
 
+    @property
+    def effective_timestamp(self) -> datetime:
+        return self.provider_updated_at or self.observed_at
+
 
 @dataclass(frozen=True, slots=True)
 class BettingDecision:
@@ -184,10 +188,11 @@ def decide_wager(
         and isfinite(quote.fair_probability)
         and 0 <= quote.fair_probability <= 1
         and quote.observed_at <= decision_time
+        and quote.effective_timestamp <= decision_time
     ]
     if fixture_kickoff is not None:
-        post_kickoff = [quote for quote in valid_quotes if quote.observed_at >= fixture_kickoff]
-        valid_quotes = [quote for quote in valid_quotes if quote.observed_at < fixture_kickoff]
+        post_kickoff = [quote for quote in valid_quotes if quote.effective_timestamp >= fixture_kickoff]
+        valid_quotes = [quote for quote in valid_quotes if quote.effective_timestamp < fixture_kickoff]
         if post_kickoff and not valid_quotes:
             reasons.append(NoBetReason.POST_KICKOFF_REFERENCE)
     if len(valid_quotes) < len(quotes) and not valid_quotes:
@@ -241,7 +246,7 @@ def decide_wager(
         1 / quote.decimal_odds,
         expected_value,
         (1 + risk.minimum_expected_value) / probability,
-        quote.observed_at,
+        quote.effective_timestamp,
         stake,
         "LATEST_PROVIDER_REFERENCE",
         None,

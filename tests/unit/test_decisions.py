@@ -238,6 +238,31 @@ def test_invalid_reference_values_are_rejected_without_key_errors(quote: MarketQ
     assert NoBetReason.INVALID_REFERENCE_ODDS in decision.reasons
 
 
+def test_provider_timestamp_after_decision_is_not_used_as_point_in_time_evidence() -> None:
+    now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+    quote = MarketQuote(
+        "home",
+        0.45,
+        2.2,
+        now - timedelta(minutes=5),
+        provider_updated_at=now + timedelta(minutes=5),
+    )
+    decision = decide_wager(
+        {"home": 0.6, "draw": 0.2, "away": 0.2},
+        [quote],
+        decision_time=now,
+        model_metrics=METRICS,
+        calibrated=True,
+        home_history=20,
+        away_history=20,
+        evidence=EVIDENCE,
+        risk=RISK,
+        **GOVERNANCE_GATES,
+    )
+    assert decision.state == "NO_BET"
+    assert NoBetReason.INVALID_REFERENCE_ODDS in decision.reasons
+
+
 def test_institutional_governance_gates_cannot_be_silently_omitted() -> None:
     parameters = signature(decide_wager).parameters
     for name in GOVERNANCE_GATES:

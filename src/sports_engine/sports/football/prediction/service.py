@@ -386,17 +386,18 @@ class PredictionService:
     def _quotes(self, fixture_id: str, prediction_time: datetime) -> list[MarketQuote]:
         rows = self.connection.execute(
             "WITH ranked AS (SELECT s.normalized_name, p.fair_probability, p.decimal_odds, o.observed_at, "
-            "b.name, row_number() OVER (PARTITION BY b.bookmaker_id, s.selection_id "
+            "b.name, o.provider_update_time, row_number() OVER (PARTITION BY b.bookmaker_id, s.selection_id "
             "ORDER BY coalesce(o.provider_update_time, o.observed_at) DESC, o.observed_at DESC, o.snapshot_id DESC) rn "
             "FROM odds_snapshots o JOIN odds_prices p USING (snapshot_id) JOIN bookmakers b USING (bookmaker_id) "
             "JOIN bet_markets m USING (market_id) JOIN bet_selections s USING (selection_id) "
             "WHERE o.fixture_id=? AND o.observed_at<=? AND lower(m.name) IN ('match winner','1x2')) "
-            "SELECT normalized_name, fair_probability, decimal_odds, observed_at, name FROM ranked WHERE rn=1",
+            "SELECT normalized_name, fair_probability, decimal_odds, observed_at, name, provider_update_time "
+            "FROM ranked WHERE rn=1",
             [fixture_id, prediction_time],
         ).fetchall()
         return [
-            MarketQuote(str(outcome), float(fair), float(price), observed, str(bookmaker))
-            for outcome, fair, price, observed, bookmaker in rows
+            MarketQuote(str(outcome), float(fair), float(price), observed, str(bookmaker), provider_updated)
+            for outcome, fair, price, observed, bookmaker, provider_updated in rows
             if outcome in {"home", "draw", "away"} and fair is not None
         ]
 

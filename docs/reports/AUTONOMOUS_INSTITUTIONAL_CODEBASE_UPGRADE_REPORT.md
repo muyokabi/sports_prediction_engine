@@ -2,6 +2,8 @@
 
 Generated 2026-10-12 and independently re-audited 2026-10-13 (Africa/Nairobi).
 
+Latest independent re-audit: 2026-10-14 (Africa/Nairobi). See the addendum at the end of this report for schema 34, append-only governance, end-to-end runtime repairs, and the Top Research report view.
+
 ## Executive verdict
 
 The platform is materially stronger and still performs its primary job: it produces fixture probabilities and fair prices. The final live acceptance analyzed all 19 requested fixtures and persisted 19 predictions and 837 prices. The audit removed the real-money label from the current model because its promotion record required significant market outperformance while containing zero historical point-in-time market-baseline rows.
@@ -175,3 +177,42 @@ It adds animated ambient depth, decision and market-family visualizations, proba
 - Legacy local pickle artifacts without hashes remain available only for trusted-local research compatibility. The production promotion gate now requires verified model and calibrator digests, and no pickle may be accepted from an untrusted source.
 
 The correct next step is continued daily prospective collection and settlement, not lowering gates to manufacture bets.
+
+## Independent re-audit addendum — 2026-10-14
+
+### Outcome
+
+The platform remains **`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`**. It produces research probabilities and fair prices, now with a concise Top Research view, while retaining zero active champions and zero production-actionable labels. No unresolved feasible P0/P1 defect was found after the repairs and final verification below.
+
+### Starting evidence and backup
+
+This pass began against the schema-33 production warehouse with 69,542 fixtures, 23,850 ML-eligible quality assessments, 161 institutional predictions, and 6,496 opportunities. Integrity failed because three completed historical opportunities were still labelled `PRODUCTION_ACTIONABLE`, while reassessment had overwritten the role projection and promotion assessment needed to prove their champion status at creation time.
+
+Before mutation, the warehouse and associated project evidence were copied to `artifacts/backups/2026-10-14-pre-append-only-governance/`. The manifest verified schema 33, 14,648 files, byte hashes, the applied migration prefix, nine critical table counts, and the exact pre-existing integrity findings.
+
+### Repairs
+
+1. Migration 034 replaces mutable promotion-assessment history with append-only assessments, adds append-only `model_market_role_events`, and seeds the current projection with an explicit incomplete-history marker. New reassessments append rather than overwrite.
+2. Integrity validates production governance point in time: the latest role event, calibration, and competition scope must all have existed at or before the opportunity was created. Three legacy labels without provable history were changed to `RESEARCH_VALUE_SIGNAL / NO_BET` with reason `LEGACY_GOVERNANCE_EVENT_HISTORY_UNAVAILABLE`; their underlying immutable predictions and prices were preserved.
+3. Shadow settlement now selects the latest quote whose collection time and effective provider timestamp are both pre-kickoff. This removed a crash caused by querying a nonexistent column.
+4. Performance rollups use an explicit named-column upsert, removing a 22-value/21-column runtime mismatch discovered only in end-to-end execution.
+5. Machine-readable football quality output is ASCII-safe and unstyled, avoiding a Windows legacy-code-page Unicode failure without altering the data.
+6. Backup verification can now attest a faithful pre-migration, known-bad source state rather than incorrectly requiring the state already to match the newest schema and pass integrity.
+
+### Research ranking requested by the operator
+
+The generated HTML contains a separate `Top Research` tab and section. It selects at most one market selection per fixture, orders applicability quality before confidence, then ranks by the conservative index `model_probability - uncertainty_buffer`, and caps the list at ten. It does not rank by reference-price disagreement or expected value. The copy explicitly says that the table is research-only, is not a betting shortlist, and that the index is not a confidence interval. `PRIOR_ONLY` and out-of-domain candidates are allowed only after stronger tiers so a sparse day can still show the requested ten while preserving visible caveats.
+
+### Final acceptance evidence
+
+Offline analysis `8116e66f-d46c-47b0-ad9a-8abb1103de88` processed 12/12 fixtures for 2026-10-14, wrote 24 predictions and 1,038 prices/opportunities across score-derived families, retained reference odds for 11 fixtures, and emitted zero production or shadow labels. Its 1,079,935-byte report contains exactly ten Top Research rows and is stored at:
+
+`artifacts/reports/2026/10/14/analysis-2026-10-14-2026-10-14-8116e66f-d46c-47b0-ad9a-8abb1103de88.html`
+
+The resulting schema-34 ledger contains 185 predictions and 7,534 opportunities: 5,181 research-only, 2,346 research-value signals, seven historical shadow-actionable observations, and zero production-actionable records. Warehouse integrity passes.
+
+Verification completed with 230 passing tests, 50 focused final regressions, clean Ruff, and strict mypy across 163 source files. The failed intermediate jobs that exposed the settlement and rollup defects remain in the operational ledger as immutable evidence; the successful final run follows them rather than erasing them.
+
+### Remaining boundary
+
+Append-only governance repairs auditability, not market evidence. Only 38 fixtures have prospective reference odds, there is no active champion, and the settled-shadow history remains insufficient for a real-money claim. Current API-Football retention cannot supply the missing historical point-in-time baseline. Daily prospective capture, settlement, and untouched chronological evaluation remain the correct path.

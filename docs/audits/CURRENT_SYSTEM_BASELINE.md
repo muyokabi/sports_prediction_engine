@@ -2,6 +2,12 @@
 
 Captured 2026-10-12 17:00 Africa/Nairobi from the production DuckDB ledger before this audit changed production logic. This snapshot supersedes the 2026-10-11 baseline. Counts were reproduced with `scripts/warehouse_audit.py` and direct read-only SQL against `data/warehouse/sports.duckdb`.
 
+## Independent pre-change capture — 2026-10-14
+
+Before the 2026-10-14 re-audit changed schema or production governance, the live warehouse was copied and independently verified at schema 33. It contained 1,241 competitions, 1,046 teams, 69,542 fixtures, 23,850 ML-eligible quality assessments, 76 odds snapshots over 38 fixtures, 65 model runs, 161 institutional predictions, and 6,496 opportunities. There was no active champion, but integrity found three older `PRODUCTION_ACTIONABLE` opportunities whose claimed champion status could not be proven at their creation time.
+
+The root cause was historical evidence loss: promotion assessments and current market-role rows were overwritten during reassessment. This made the current projection look correct while preventing a point-in-time proof of earlier decisions. The verified pre-change backup is `artifacts/backups/2026-10-14-pre-append-only-governance/backup_manifest.json`. Migration 034 and the resulting state are deliberately not part of this baseline; they are documented in the improvement register and final report.
+
 ## Classification at capture
 
 `RESEARCH + EARLY SHADOW / REAL-MONEY STATUS REQUIRES RE-AUDIT`

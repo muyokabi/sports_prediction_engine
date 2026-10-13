@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from sports_engine.cli.football import _backfill_detail_status
 from sports_engine.core.enums import Priority
 from sports_engine.core.exceptions import QuotaExhaustedError
 from sports_engine.providers.api_football.quota import QuotaObservation
@@ -17,6 +18,19 @@ from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
 from sports_engine.warehouse.repositories.fixtures import upsert_fixture
 from sports_engine.warehouse.repositories.leagues import upsert_competition_season
+
+
+def test_current_backfill_summary_does_not_bind_unreferenced_seasons(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "current-summary.duckdb")
+    migrate(connection)
+
+    assert _backfill_detail_status(
+        connection,
+        ledger_mode="production",
+        selected_seasons=(2025, 2026),
+        historical=False,
+    ) == {"completed": 0, "eligible": 0, "pending_repair": 0, "unassessed": 0}
+    connection.close()
 
 
 def test_backfill_uses_dynamic_surplus_and_excludes_exhausted_repairs(tmp_path: Path) -> None:
@@ -128,9 +142,7 @@ def test_legacy_optional_detail_failure_is_reclassified_without_api_call(tmp_pat
         [fixture_id, now, now],
     )
 
-    assert reclassify_completed_results(
-        connection, ledger_mode="replay", provider_seasons=(2024,)
-    ) == 1
+    assert reclassify_completed_results(connection, ledger_mode="replay", provider_seasons=(2024,)) == 1
     assert connection.execute("SELECT eligibility FROM fixture_quality_status").fetchone() == ("ML_ELIGIBLE",)
     assert connection.execute("SELECT count(*) FROM fixture_repair_state").fetchone() == (0,)
     connection.close()

@@ -88,10 +88,13 @@ class ApiFootballClient:
         envelope: ApiEnvelope | None = None
         artifact: RawArtifact | None = None
         last_error: Exception | None = None
-        self.quota_budget.authorize(priority)
         for attempt in range(self.retry_count + 1):
-            self.rate_limiter.acquire()
             try:
+                # Re-authorize every physical attempt. A retry is another
+                # provider request and must not consume the protected reserve
+                # merely because the first attempt was authorized.
+                self.quota_budget.authorize(priority)
+                self.rate_limiter.acquire()
                 response = self._client.get(endpoint, params=parameter_dict)
                 observed_at = datetime.now(UTC)
                 quota = QuotaObservation.from_headers(response.headers, observed_at)

@@ -67,6 +67,8 @@ class OpportunityRow:
     bookmaker_dispersion: float | None = None
     execution_edge: float | None = None
     reasons: tuple[str, ...] = ()
+    applicability_state: str = "OUT_OF_DOMAIN"
+    applicability_level: str = "OUT_OF_DOMAIN"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +162,51 @@ def _price_target_rows(report: DailyAnalysisReport) -> str:
     )
 
 
+def _top_research_predictions(report: DailyAnalysisReport, limit: int = 10) -> tuple[OpportunityRow, ...]:
+    """Rank one research selection per fixture without implying betting value."""
+    tier = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "PRIOR_ONLY": 3, "OUT_OF_DOMAIN": 4}
+    candidates = sorted(
+        report.price_targets,
+        key=lambda row: (
+            tier.get(row.applicability_level, 5),
+            -(row.model_probability - row.uncertainty),
+            row.kickoff,
+            row.fixture,
+            row.market,
+            row.selection,
+        ),
+    )
+    selected: list[OpportunityRow] = []
+    seen_fixtures: set[tuple[str, datetime]] = set()
+    for row in candidates:
+        fixture_key = (row.fixture, row.kickoff)
+        if fixture_key in seen_fixtures:
+            continue
+        seen_fixtures.add(fixture_key)
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return tuple(selected)
+
+
+def _research_prediction_rows(report: DailyAnalysisReport) -> str:
+    rows = _top_research_predictions(report)
+    if not rows:
+        return (
+            '<tr><td colspan="12" class="empty">No research prediction is available.</td></tr>'
+        )
+    return "".join(
+        f"<tr><td>{rank}</td><td>{escape(row.competition)}</td>"
+        f"<td>{escape(row.kickoff.isoformat())}</td><td>{escape(row.fixture)}</td>"
+        f"<td>{escape(row.market)}</td><td>{escape(row.selection)}</td>"
+        f"<td>{row.model_probability:.3f}</td><td>{row.uncertainty:.3f}</td>"
+        f"<td>{max(0.0, row.model_probability - row.uncertainty):.3f}</td>"
+        f"<td>{escape(row.applicability_level)}</td><td>{escape(row.applicability_state)}</td>"
+        f"<td>{escape(row.decision)}</td></tr>"
+        for rank, row in enumerate(rows, start=1)
+    )
+
+
 def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Path:
     analyzed = sum(row.terminal_state == "ANALYZED" for row in report.fixtures)
     decision_counts = {
@@ -227,6 +274,7 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
     embedded = json.dumps(asdict(report), default=str, ensure_ascii=False).replace("</", "<\\/")
     tabs = (
         ("overview", "Overview"),
+        ("research", "Top research"),
         ("opportunities", "Top opportunities"),
         ("matches", "All matches"),
         ("market", "Market board"),
@@ -270,11 +318,14 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
         family = row.market.split()[0]
         market_counts[family] = market_counts.get(family, 0) + 1
     largest_market = max(market_counts.values(), default=1)
-    market_chart = "".join(
-        f'<div class="bar-row"><span>{escape(name.replace("_", " "))}</span><div class="bar-track">'
-        f'<i style="--w:{count / largest_market:.4f}"></i></div><strong>{count}</strong></div>'
-        for name, count in sorted(market_counts.items(), key=lambda item: (-item[1], item[0]))
-    ) or '<p class="empty">No market prices in this range.</p>'
+    market_chart = (
+        "".join(
+            f'<div class="bar-row"><span>{escape(name.replace("_", " "))}</span><div class="bar-track">'
+            f'<i style="--w:{count / largest_market:.4f}"></i></div><strong>{count}</strong></div>'
+            for name, count in sorted(market_counts.items(), key=lambda item: (-item[1], item[0]))
+        )
+        or '<p class="empty">No market prices in this range.</p>'
+    )
     total_decisions = max(1, len(report.price_targets))
     signal_share = 100 * decision_counts["RESEARCH_VALUE_SIGNAL"] / total_decisions
     shadow_share = 100 * decision_counts["SHADOW_ACTIONABLE"] / total_decisions
@@ -326,9 +377,10 @@ details{{border:1px solid var(--line);background:var(--panel);margin:8px 0;borde
 <div class="board">{metric_html}</div><div class="visual-grid"><div class="visual-card"><h3>Decision state</h3>{decision_visual}<div class="legend"><span><i style="background:var(--success)"></i>Production</span><span><i style="background:var(--violet)"></i>Shadow</span><span><i style="background:var(--accent)"></i>Research signal</span></div></div><div class="visual-card"><h3>Probability surface by market family</h3>{market_chart}</div></div><div class="warning"><strong>SHADOW ROWS ARE NOT BETTING PICKS. MANUAL PRICE CONFIRMATION REQUIRED.</strong> Use their minimum odds only for prospective paper tracking. Real-money consideration requires an explicit <code>PRODUCTION_ACTIONABLE / BET_IF_PRICE_AVAILABLE</code> decision plus a newly checked operator price. API-Football prices are reference observations, not guaranteed executable prices.</div><h2>Research state</h2><div class="panel">
 <p>Football pricing and market reference are separate: eligible history is <strong>{report.eligible_fixtures}</strong>; model state is <strong>{escape(report.model_health)}</strong>; market references are <strong>{escape(report.odds_health)}</strong>. Execution edge remains unknown until an operator checks a broker.</p>
 <p class="muted">No probability, price, or opportunity is inferred when persisted evidence is unavailable.</p></div></section>
+<section id="research" class="tab"><h2>Top 10 research predictions by confidence</h2><p class="muted">Research ranking only—not a betting or value ranking. Applicability tier is considered first; within a tier, the confidence index is model probability minus the persisted uncertainty buffer. It is a transparent conservative index, not a confidence interval. One selection per fixture is shown to limit correlated duplication. Prior-only and out-of-domain rows may appear when stronger evidence is unavailable; their applicability is displayed and they remain non-actionable.</p><div class="panel"><table id="research-confidence-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Uncertainty buffer</th><th>Confidence index</th><th>Applicability</th><th>State</th><th>Governance</th></tr></thead><tbody>{_research_prediction_rows(report)}</tbody></table></div></section>
 <section id="opportunities" class="tab"><h2>Top 10 decision candidates</h2><p class="muted">PRODUCTION_ACTIONABLE rows have passed every persisted evidence gate but still require a newly checked operator price. SHADOW_ACTIONABLE rows are prospective validation observations, not approved bets. Reference edge alone is not execution edge.</p><div class="filters"><select id="league-filter"><option value="">All leagues</option>{league_options}</select><select id="decision-filter"><option value="">All decisions</option><option>PRODUCTION_ACTIONABLE</option><option>SHADOW_ACTIONABLE</option></select></div><div class="panel"><table id="opportunity-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Reference bookmaker</th><th>Reference observed</th><th>Age</th><th>Market p</th><th>Reference edge</th><th>Robust estimate</th><th>Execution edge</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{_opportunity_rows(report)}</tbody></table></div></section>
 <section id="matches" class="tab"><h2>Fixture research panels</h2>{research_panels or '<div class="panel empty">No expected fixtures in this range.</div>'}</section>
-<section id="market" class="tab"><h2>Football price targets and API-Football references</h2><p class="muted">Latest-per-bookmaker references are used for comparison. Earlier snapshots contribute movement history only. Gate reasons explain why a row is not production-actionable.</p><div class="filters"><input id="market-search" type="search" placeholder="Search fixture, league or selection…" aria-label="Search market board"><select id="market-family"><option value="">All market families</option>{''.join(f'<option>{escape(name)}</option>' for name in sorted(market_counts))}</select><select id="market-decision"><option value="">All decision states</option>{''.join(f'<option>{escape(name)}</option>' for name in sorted({row.decision for row in report.price_targets}))}</select><span id="market-count" class="result-count">{len(report.price_targets)} rows</span></div><div class="panel"><table id="market-table"><thead><tr><th>Competition</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Bookmaker</th><th>Age</th><th>Snapshots</th><th>Movement</th><th>Dispersion</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>
+<section id="market" class="tab"><h2>Football price targets and API-Football references</h2><p class="muted">Latest-per-bookmaker references are used for comparison. Earlier snapshots contribute movement history only. Gate reasons explain why a row is not production-actionable.</p><div class="filters"><input id="market-search" type="search" placeholder="Search fixture, league or selection…" aria-label="Search market board"><select id="market-family"><option value="">All market families</option>{"".join(f"<option>{escape(name)}</option>" for name in sorted(market_counts))}</select><select id="market-decision"><option value="">All decision states</option>{"".join(f"<option>{escape(name)}</option>" for name in sorted({row.decision for row in report.price_targets}))}</select><span id="market-count" class="result-count">{len(report.price_targets)} rows</span></div><div class="panel"><table id="market-table"><thead><tr><th>Competition</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Bookmaker</th><th>Age</th><th>Snapshots</th><th>Movement</th><th>Dispersion</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>
 <section id="models" class="tab"><h2>Model health and continuous learning</h2><div class="panel"><table><thead><tr><th>Algorithm</th><th>Version</th><th>State</th><th>Parent</th><th>Train cutoff</th><th>Train</th><th>Validation</th><th>Test</th><th>New</th><th>Log loss</th><th>Brier</th><th>RPS</th><th>Calibration</th><th>Next trigger</th></tr></thead><tbody>{_model_rows(report)}</tbody></table></div></section>
 <section id="data" class="tab"><h2>Data health</h2><div class="board"><div class="metric"><span class="label">Eligible fixtures</span><span class="value">{report.eligible_fixtures}</span></div><div class="metric"><span class="label">Observation leagues</span><span class="value">{report.observation_leagues}</span></div><div class="metric"><span class="label">Odds health</span><span class="value">{escape(report.odds_health)}</span></div></div></section>
 <section id="audit" class="tab"><h2>Full universe audit</h2><div class="filters"><select id="audit-league"><option value="">All leagues</option>{league_options}</select><select id="audit-state"><option value="">All states</option>{state_options}</select></div><div class="panel"><table id="audit-table"><thead><tr><th>Competition</th><th>Fixture</th><th>Kickoff</th><th>State</th><th>Odds</th><th>Model</th><th>Reasons</th></tr></thead><tbody>{fixture_rows}</tbody></table></div></section></main>

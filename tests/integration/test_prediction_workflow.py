@@ -14,6 +14,7 @@ from sports_engine.models.statistical.poisson import PoissonModel
 from sports_engine.sports.football.domain.fixture import FixtureRecord
 from sports_engine.sports.football.prediction.service import PredictionService
 from sports_engine.warehouse.connection import connect
+from sports_engine.warehouse.integrity import audit_integrity
 from sports_engine.warehouse.migrations import migrate
 from sports_engine.warehouse.repositories.fixtures import upsert_fixture
 from sports_engine.warehouse.repositories.leagues import upsert_competition_season
@@ -171,7 +172,7 @@ def test_champion_prediction_is_point_in_time_and_append_only(tmp_path: Path) ->
     connection.close()
 
 
-def test_analysis_persists_qualified_fundamental_core_prices(tmp_path: Path) -> None:
+def test_analysis_persists_research_prices_without_production_actionability(tmp_path: Path) -> None:
     connection = connect(tmp_path / "institutional-analysis.duckdb")
     migrate(connection)
     observed = datetime(2026, 6, 1, 9, tzinfo=UTC)
@@ -213,7 +214,7 @@ def test_analysis_persists_qualified_fundamental_core_prices(tmp_path: Path) -> 
         ModelRun(
             model_type="poisson",
             version="poisson-qualified",
-            status="champion",
+            status="candidate",
             training_start=observed - timedelta(days=100),
             training_end=observed - timedelta(days=1),
             feature_schema_hash="schema",
@@ -228,7 +229,7 @@ def test_analysis_persists_qualified_fundamental_core_prices(tmp_path: Path) -> 
         )
     )
     connection.execute(
-        "UPDATE model_runs SET evidence_state='PRODUCTION_ACTIONABLE' WHERE model_run_id=?",
+        "UPDATE model_runs SET evidence_state='RESEARCH_TRAINABLE' WHERE model_run_id=?",
         [model_run_id],
     )
 
@@ -267,8 +268,23 @@ def test_analysis_persists_qualified_fundamental_core_prices(tmp_path: Path) -> 
         "JOIN institutional_predictions i USING (prediction_id) WHERE i.analysis_run_id=?",
         [result.analysis_run_id],
     ).fetchone() == (7, "PRICE_TARGET")
+    assert connection.execute(
+        "SELECT count(*) FROM institutional_opportunities o "
+        "JOIN institutional_predictions i USING (prediction_id) "
+        "WHERE i.analysis_run_id=? AND o.governance_state='PRODUCTION_ACTIONABLE'",
+        [result.analysis_run_id],
+    ).fetchone() == (0,)
     document = result.report_path.read_text(encoding="utf-8")
     assert result.report_path.parts[-4:-1] == ("2026", "06", "01")
     assert "MANUAL PRICE CONFIRMATION REQUIRED" in document
     assert "PRICE_TARGET" in document
+    connection.execute(
+        "UPDATE institutional_opportunities SET governance_state='PRODUCTION_ACTIONABLE', "
+        "decision='BET_IF_PRICE_AVAILABLE' WHERE prediction_id IN "
+        "(SELECT prediction_id FROM institutional_predictions WHERE analysis_run_id=?)",
+        [result.analysis_run_id],
+    )
+    assert {issue.check: issue.count for issue in audit_integrity(connection)}[
+        "unqualified_production_opportunities"
+    ] == 7
     connection.close()

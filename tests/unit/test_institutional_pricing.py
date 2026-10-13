@@ -20,7 +20,7 @@ from sports_engine.markets.taxonomy import (
     classify_api_football_market,
     persist_observed_api_football_markets,
 )
-from sports_engine.reporting.html import DailyAnalysisReport, FixtureAuditRow, render_daily_analysis
+from sports_engine.reporting.html import DailyAnalysisReport, FixtureAuditRow, OpportunityRow, render_daily_analysis
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
 
@@ -165,6 +165,7 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
         section in document
         for section in (
             "Overview",
+            "Top research",
             "Top opportunities",
             "All matches",
             "Market board",
@@ -182,3 +183,58 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
     assert "filterMarket" in document
     assert "prefers-reduced-motion" in document
     assert "Football intelligence" in document
+
+
+def test_html_ranks_one_in_domain_research_selection_per_fixture(tmp_path: Path) -> None:
+    now = datetime(2026, 10, 8, 9, tzinfo=UTC)
+
+    def row(fixture: str, market: str, probability: float, level: str) -> OpportunityRow:
+        return OpportunityRow(
+            rank=1,
+            competition="League",
+            kickoff=now,
+            fixture=fixture,
+            market=market,
+            selection="HOME",
+            model_probability=probability,
+            model_fair_odds=1 / probability,
+            minimum_odds=1 / probability + 0.1,
+            reference_odds=None,
+            bookmaker=None,
+            reference_observed_at=None,
+            reference_age_minutes=None,
+            market_probability=None,
+            reference_edge=None,
+            robust_edge=None,
+            reference_expected_return=None,
+            uncertainty=0.05,
+            reference_state="NO_REFERENCE_ODDS",
+            decision="RESEARCH_ONLY",
+            applicability_state="FULLY_ESTIMATED" if level == "HIGH" else "PARTIALLY_POOLED",
+            applicability_level=level,
+        )
+
+    path = render_daily_analysis(
+        DailyAnalysisReport(
+            now.date(),
+            now.date(),
+            now,
+            (),
+            price_targets=(
+                row("A v B", "MATCH_ODDS", 0.70, "HIGH"),
+                row("A v B", "TOTAL_GOALS 2.5", 0.80, "HIGH"),
+                row("C v D", "MATCH_ODDS", 0.90, "OUT_OF_DOMAIN"),
+                row("E v F", "MATCH_ODDS", 0.65, "MEDIUM"),
+            ),
+        ),
+        tmp_path / "report.html",
+    )
+
+    document = path.read_text(encoding="utf-8")
+    section = document.split('<section id="research"', 1)[1].split("</section>", 1)[0]
+    assert "Top 10 research predictions by confidence" in section
+    assert section.count("A v B") == 1
+    assert "TOTAL_GOALS 2.5" in section
+    assert "E v F" in section
+    assert "C v D" in section
+    assert "not a confidence interval" in section

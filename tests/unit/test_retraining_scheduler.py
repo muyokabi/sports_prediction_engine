@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from sports_engine.core.config import AppConfig
 from sports_engine.models.registry import ModelRegistry, ModelRun
+from sports_engine.sports.football.normalization.fixtures import normalize_fixture
 from sports_engine.training.continuous import _train_due_candidate, run_due_ml_updates
 from sports_engine.training.scheduler import (
     DEFAULT_RETRAINING_POLICIES,
@@ -15,6 +17,8 @@ from sports_engine.training.scheduler import (
 )
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
+from sports_engine.warehouse.repositories.fixtures import upsert_fixture
+from sports_engine.warehouse.repositories.leagues import upsert_competition_season
 
 
 def test_retraining_trigger_uses_model_specific_new_observation_policy(tmp_path: Path) -> None:
@@ -78,11 +82,58 @@ def test_due_ml_updates_accepts_empty_history(tmp_path: Path, monkeypatch: pytes
     migrate(connection)
     promotion = SimpleNamespace(promoted_versions=(), withheld_versions=())
     monkeypatch.setattr("sports_engine.training.continuous.run_automated_promotion", lambda *args, **kwargs: promotion)
-    config = SimpleNamespace(models=SimpleNamespace(historical_training_ledgers=["replay"]))
-    result = run_due_ml_updates(connection, config, ledger_mode="production")  # type: ignore[arg-type]
+    config = AppConfig(data_dir=tmp_path / "data", artifacts_dir=tmp_path / "artifacts")
+    result = run_due_ml_updates(connection, config, ledger_mode="production")
     assert result.eligible_observations == 0
     assert result.due_models == ()
     assert result.trained_versions == ()
+    connection.close()
+
+
+def test_due_ml_updates_counts_score_only_results_in_exact_training_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = connect(tmp_path / "score-only-learning.duckdb")
+    migrate(connection)
+    season_id = upsert_competition_season(
+        connection,
+        {"id": 39, "name": "League"},
+        {"year": 2026, "current": True, "coverage": {}},
+        admitted=True,
+        ledger_mode="production",
+        reason="qualified",
+        priority=1,
+    )
+    payload = {
+        "fixture": {
+            "id": 901,
+            "date": datetime(2026, 10, 1, 12, tzinfo=UTC).isoformat(),
+            "status": {"short": "FT", "long": "Finished", "elapsed": 90},
+        },
+        "league": {"id": 39, "season": 2026, "round": "Round 1"},
+        "teams": {
+            "home": {"id": 10, "name": "Home"},
+            "away": {"id": 11, "name": "Away"},
+        },
+        "goals": {"home": 1, "away": 0},
+    }
+    upsert_fixture(connection, normalize_fixture(payload), season_id, "fixture.json.gz")
+    observed_counts: list[int] = []
+
+    def not_due(*_args: object, eligible_observations: int, **_kwargs: object) -> UpdateDecision:
+        observed_counts.append(eligible_observations)
+        return UpdateDecision("poisson", None, False, 0, (), "full_refit")
+
+    promotion = SimpleNamespace(promoted_versions=(), withheld_versions=())
+    monkeypatch.setattr("sports_engine.training.continuous.assess_model_update", not_due)
+    monkeypatch.setattr("sports_engine.training.continuous.run_automated_promotion", lambda *args, **kwargs: promotion)
+    config = AppConfig(data_dir=tmp_path / "data", artifacts_dir=tmp_path / "artifacts")
+
+    result = run_due_ml_updates(connection, config, ledger_mode="production")
+
+    assert result.eligible_observations == 1
+    assert observed_counts == [1] * 6
+    assert connection.execute("SELECT count(*) FROM fixture_quality_status").fetchone() == (0,)
     connection.close()
 
 

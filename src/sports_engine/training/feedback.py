@@ -93,15 +93,14 @@ def settle_shadow_opportunities(connection: duckdb.DuckDBPyConnection) -> Shadow
             int(home),
             int(away),
         )
-        closing = connection.execute(
-            "SELECT r.decimal_odds FROM market_reference_quotes r "
-            "JOIN institutional_predictions ip ON ip.prediction_id=r.prediction_id "
-            "WHERE CAST(ip.target_fixture_id AS VARCHAR)=? AND r.canonical_market=? "
-            "AND r.selection=? AND r.line_key=? AND r.reference_observed_at<? "
-            "ORDER BY r.reference_observed_at DESC LIMIT 1",
-            [fixture_id, market, selection, line_key, kickoff],
-        ).fetchone()
-        closing_odds = float(closing[0]) if closing and closing[0] is not None else None
+        closing_odds = _closing_reference_odds(
+            connection,
+            fixture_id=str(fixture_id),
+            market=str(market),
+            selection=str(selection),
+            line_key=str(line_key),
+            kickoff=kickoff,
+        )
         metrics = {
             "outcome": outcome,
             "home_goals": int(home),
@@ -119,6 +118,28 @@ def settle_shadow_opportunities(connection: duckdb.DuckDBPyConnection) -> Shadow
             [json.dumps(metrics, sort_keys=True), settled_at, shadow_id],
         )
     return ShadowSettlementResult(len(rows))
+
+
+def _closing_reference_odds(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    fixture_id: str,
+    market: str,
+    selection: str,
+    line_key: str,
+    kickoff: datetime,
+) -> float | None:
+    """Return the latest quote whose collection and effective provider time precede kickoff."""
+    row = connection.execute(
+        "SELECT r.decimal_odds FROM market_reference_quotes r "
+        "JOIN institutional_predictions ip ON ip.prediction_id=r.prediction_id "
+        "WHERE CAST(ip.target_fixture_id AS VARCHAR)=? AND r.canonical_market=? "
+        "AND r.selection=? AND r.line_key=? AND r.collected_at<? "
+        "AND coalesce(r.provider_update_timestamp, r.collected_at)<? "
+        "ORDER BY coalesce(r.provider_update_timestamp, r.collected_at) DESC, r.collected_at DESC LIMIT 1",
+        [fixture_id, market, selection, line_key, kickoff, kickoff],
+    ).fetchone()
+    return float(row[0]) if row and row[0] is not None else None
 
 
 def _realized_shadow_return(
@@ -211,27 +232,60 @@ def refresh_performance_rollups(connection: duckdb.DuckDBPyConnection) -> int:
         if period_end_row is None:
             continue
         period_end = period_end_row[0]
-        connection.execute(
-            "INSERT INTO model_performance_rollups VALUES (?, ?, ?, ?, ?, 'ALL', 'ALL', ?, ?, ?, ?, ?, "
-            "NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?) "
-            "ON CONFLICT (model_version, engine, competition_id, canonical_market, odds_band, "
-            "opportunity_band, period_start, period_end) DO UPDATE SET sample_size=excluded.sample_size, "
-            "log_loss=excluded.log_loss, brier=excluded.brier, accuracy=excluded.accuracy, "
-            "computed_at=excluded.computed_at",
-            [
-                str(uuid.uuid4()),
-                version,
-                engine,
-                competition_id,
-                market,
-                period,
-                period_end,
-                sample_size,
-                sum(realized_losses) / sample_size if realized_losses else None,
-                brier,
-                correct / sample_size,
-                datetime.now(UTC),
-            ],
+        _upsert_performance_rollup(
+            connection,
+            version=str(version),
+            engine=str(engine),
+            competition_id=str(competition_id),
+            market=str(market),
+            period_start=period,
+            period_end=period_end,
+            sample_size=sample_size,
+            log_loss=sum(realized_losses) / sample_size if realized_losses else None,
+            brier=brier,
+            accuracy=correct / sample_size,
+            computed_at=datetime.now(UTC),
         )
         written += 1
     return written
+
+
+def _upsert_performance_rollup(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    version: str,
+    engine: str,
+    competition_id: str,
+    market: str,
+    period_start: Any,
+    period_end: Any,
+    sample_size: int,
+    log_loss: float | None,
+    brier: float,
+    accuracy: float,
+    computed_at: datetime,
+) -> None:
+    connection.execute(
+        "INSERT INTO model_performance_rollups "
+        "(rollup_id, model_version, engine, competition_id, canonical_market, odds_band, "
+        "opportunity_band, period_start, period_end, sample_size, log_loss, brier, accuracy, computed_at) "
+        "VALUES (?, ?, ?, ?, ?, 'ALL', 'ALL', ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (model_version, engine, competition_id, canonical_market, odds_band, "
+        "opportunity_band, period_start, period_end) DO UPDATE SET sample_size=excluded.sample_size, "
+        "log_loss=excluded.log_loss, brier=excluded.brier, accuracy=excluded.accuracy, "
+        "computed_at=excluded.computed_at",
+        [
+            str(uuid.uuid4()),
+            version,
+            engine,
+            competition_id,
+            market,
+            period_start,
+            period_end,
+            sample_size,
+            log_loss,
+            brier,
+            accuracy,
+            computed_at,
+        ],
+    )

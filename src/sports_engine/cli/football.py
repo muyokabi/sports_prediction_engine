@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from sports_engine.cli.runtime import open_database, provider_client
+from sports_engine.core.cleanup import run_scheduled_cleanup
 from sports_engine.core.config import ApplicationMode, load_config
 from sports_engine.core.exceptions import ProviderUnavailableError
 from sports_engine.core.paths import project_root
@@ -54,6 +55,38 @@ def _ledger_target(config: Any) -> tuple[str, int | None]:
     if config.mode == ApplicationMode.DEVELOPMENT:
         return "replay", config.provider_access.replay_season
     return "production", None
+
+
+def _backfill_detail_status(
+    connection: Any,
+    *,
+    ledger_mode: str,
+    selected_seasons: tuple[int, ...],
+    historical: bool,
+) -> dict[str, int]:
+    season_parameters = list(selected_seasons) if historical else []
+    season_filter = ""
+    if season_parameters:
+        placeholders = ",".join("?" for _ in season_parameters)
+        season_filter = f"AND cs.provider_season IN ({placeholders}) "
+    detail_row = connection.execute(
+        "SELECT count(*) FILTER (WHERE f.status_short IN ('FT','AET','PEN')), "
+        "count(*) FILTER (WHERE q.eligibility='ML_ELIGIBLE'), "
+        "count(*) FILTER (WHERE q.eligibility='PENDING_REPAIR'), "
+        "count(*) FILTER (WHERE f.status_short IN ('FT','AET','PEN') AND q.fixture_id IS NULL) "
+        "FROM fixtures_current f JOIN competition_seasons cs USING (competition_season_id) "
+        "LEFT JOIN fixture_quality_status q USING (fixture_id) WHERE cs.ledger_mode=? "
+        f"{season_filter}",
+        [ledger_mode, *season_parameters],
+    ).fetchone()
+    if detail_row is None:
+        return {"completed": 0, "eligible": 0, "pending_repair": 0, "unassessed": 0}
+    return {
+        "completed": int(detail_row[0]),
+        "eligible": int(detail_row[1]),
+        "pending_repair": int(detail_row[2]),
+        "unassessed": int(detail_row[3]),
+    }
 
 
 def _candidates() -> list[dict[str, Any]]:
@@ -439,28 +472,12 @@ def fetch_backfill(
                         capped_client,
                         config.data_dir / "quarantine",
                     ).run(plan.fixture_ids, job_run_id=run_id)
-                season_parameters = list(selected_seasons)
-                season_filter = ""
-                if historical and season_parameters:
-                    placeholders = ",".join("?" for _ in season_parameters)
-                    season_filter = f"AND cs.provider_season IN ({placeholders}) "
-                detail_row = connection.execute(
-                    "SELECT count(*) FILTER (WHERE f.status_short IN ('FT','AET','PEN')), "
-                    "count(*) FILTER (WHERE q.eligibility='ML_ELIGIBLE'), "
-                    "count(*) FILTER (WHERE q.eligibility='PENDING_REPAIR'), "
-                    "count(*) FILTER (WHERE f.status_short IN ('FT','AET','PEN') AND q.fixture_id IS NULL) "
-                    "FROM fixtures_current f JOIN competition_seasons cs USING (competition_season_id) "
-                    "LEFT JOIN fixture_quality_status q USING (fixture_id) WHERE cs.ledger_mode=? "
-                    f"{season_filter}",
-                    [ledger_mode, *season_parameters],
-                ).fetchone()
-                if detail_row is not None:
-                    detail_status = {
-                        "completed": int(detail_row[0]),
-                        "eligible": int(detail_row[1]),
-                        "pending_repair": int(detail_row[2]),
-                        "unassessed": int(detail_row[3]),
-                    }
+                detail_status = _backfill_detail_status(
+                    connection,
+                    ledger_mode=ledger_mode,
+                    selected_seasons=selected_seasons,
+                    historical=historical,
+                )
             summary.requests_used = int(discovery_result is not None) + int(catalog_result is not None)
             summary.fixtures_discovered = sum(result.fixtures_written for result in bootstrap_results)
             summary.fixtures_updated = summary.fixtures_discovered
@@ -572,6 +589,13 @@ def daily(
     from sports_engine.training.continuous import run_due_ml_updates
 
     config = load_config()
+    cleanup_result = run_scheduled_cleanup(config)
+    if cleanup_result.ran and cleanup_result.removed:
+        console.print(
+            f"Generated-file cleanup: removed={len(cleanup_result.removed)} bytes={cleanup_result.bytes_removed}."
+        )
+    if cleanup_result.errors:
+        console.print(f"[yellow]Generated-file cleanup warning: {'; '.join(cleanup_result.errors)}[/]")
     connection = open_database(config)
     ledger_mode, replay_season = _ledger_target(config)
     if as_of is not None:
@@ -844,13 +868,14 @@ def quality(
     details = quality_details(connection) if detailed else []
     connection.close()
     if as_json:
-        console.print_json(
+        # Rich decodes JSON escapes before writing and can therefore fail on
+        # legacy Windows consoles whose code page cannot represent a provider
+        # competition name. Keep machine output ASCII-safe and unstyled.
+        typer.echo(
             json.dumps(
-                {
-                    "summary": [asdict(item) for item in summaries],
-                    "details": details,
-                },
+                {"summary": [asdict(item) for item in summaries], "details": details},
                 default=str,
+                ensure_ascii=True,
             )
         )
         return

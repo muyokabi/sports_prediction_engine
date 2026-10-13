@@ -43,16 +43,16 @@ def run_due_ml_updates(
     every gate are retained as immutable challengers.
     """
     observed = now or datetime.now(UTC)
-    training_modes = tuple(dict.fromkeys((ledger_mode, *config.models.historical_training_ledgers)))
-    placeholders = ",".join("?" for _ in training_modes)
-    count_row = connection.execute(
-        "SELECT count(*) FROM fixtures_current f JOIN competition_seasons cs "
-        "USING (competition_season_id) JOIN fixture_quality_status q USING (fixture_id) "
-        f"WHERE cs.ledger_mode IN ({placeholders}) AND q.eligibility='ML_ELIGIBLE' "
-        "AND f.status_short IN ('FT','AET','PEN')",
-        list(training_modes),
-    ).fetchone()
-    eligible = int(count_row[0]) if count_row else 0
+    builder = PointInTimeFeatureBuilder(
+        connection,
+        config.data_dir / "parquet" / "features",
+        windows=config.features.windows,
+        exponential_half_life=config.features.exponential_half_life,
+        prediction_lead_hours=config.features.prediction_lead_hours,
+        historical_ledger_modes=config.models.historical_training_ledgers,
+        replay_universe_states=["ACTIONABLE"],
+    )
+    eligible = builder.count_training_observations(ledger_mode)
     if eligible == 0:
         # Empty history is normal immediately after installation.  There is
         # no dataset to build or candidate to train yet, and the principal
@@ -85,15 +85,7 @@ def run_due_ml_updates(
         )
 
     dataset_name = f"automatic-models-{observed.strftime('%Y%m%dT%H%M%S%fZ')}"
-    PointInTimeFeatureBuilder(
-        connection,
-        config.data_dir / "parquet" / "features",
-        windows=config.features.windows,
-        exponential_half_life=config.features.exponential_half_life,
-        prediction_lead_hours=config.features.prediction_lead_hours,
-        historical_ledger_modes=config.models.historical_training_ledgers,
-        replay_universe_states=["ACTIONABLE"],
-    ).build(dataset_name, ledger_mode=ledger_mode)
+    builder.build(dataset_name, ledger_mode=ledger_mode)
     trainer = ModelTrainer(
         connection,
         config.artifacts_dir,

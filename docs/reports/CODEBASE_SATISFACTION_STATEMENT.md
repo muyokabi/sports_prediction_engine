@@ -1,6 +1,6 @@
 # Codebase Satisfaction Statement
 
-Generated 2026-10-12 and independently re-audited 2026-10-13 (Africa/Nairobi).
+Generated 2026-10-12 and independently re-audited 2026-10-13 and 2026-10-14 (Africa/Nairobi).
 
 I audited the current repository, production warehouse, model registry, provider ledger, analysis runs, HTML artifacts, configuration, migrations, feature construction, model evidence, automated promotion, applicability, market-family decisions, odds semantics, risk gates, recovery behavior, and tests. I also researched API-Football's documented availability/retention constraints and primary sources on football score models, proper scoring, chronological validation, calibration, market benchmarks, uncertainty, risk, and DuckDB operation.
 
@@ -19,3 +19,13 @@ I am **not** satisfied that current empirical evidence supports real-money use. 
 Final operational state: **`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`**.
 
 Continue normal live runs to accumulate reference odds and settlements. Do not manually promote a model, weaken the baseline requirement, or reinterpret `RESEARCH_VALUE_SIGNAL`, `PRICE_TARGET`, or `SHADOW_ACTIONABLE` as an executable bet.
+
+## 2026-10-14 satisfaction boundary
+
+The latest pass found and fixed three further feasible P1 defects: reassessment destroyed point-in-time promotion/role evidence, shadow settlement referenced a nonexistent quote timestamp column, and performance-rollup persistence had a positional column-count mismatch. A verified schema-33 backup preceded migration 034. Promotion assessments and role changes are now append-only, legacy production labels without provable event history are quarantined without changing predictions, and end-to-end settlement/rollup paths have real migrated-database regressions.
+
+The user-facing report now provides the requested ten strongest research selections. They are ordered by applicability quality and a conservative probability-minus-uncertainty index, not by supposed betting value. The section is explicitly research-only and visibly identifies prior-only or out-of-domain applicability.
+
+Final evidence is 230 passing tests, clean Ruff, strict mypy over 163 source files, passing warehouse integrity, and a 12/12-fixture offline principal run that produced 24 predictions and 1,038 prices with zero production or shadow labels. I am satisfied that no known feasible P0/P1 code-correctness defect remains from this audit and that the platform still fulfills its research-prediction purpose.
+
+I remain **not** satisfied that the evidence supports real-money decision use. There are only 38 fixtures with prospective reference odds, no active champion, and insufficient settled-shadow evidence. The final operational state is unchanged: **`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`**.

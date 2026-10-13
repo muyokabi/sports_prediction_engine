@@ -5,13 +5,19 @@ import httpx
 import pytest
 
 from sports_engine.core.enums import Priority
-from sports_engine.core.exceptions import ProviderError, ProviderRateLimitError, ProviderUnavailableError
+from sports_engine.core.exceptions import (
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
+    QuotaExhaustedError,
+)
 from sports_engine.providers.api_football.auth import ApiFootballCredentials
 from sports_engine.providers.api_football.client import ApiFootballClient
 from sports_engine.providers.api_football.errors import (
     ApiFootballInvalidParametersError,
     ApiFootballPlanRestrictionError,
 )
+from sports_engine.providers.api_football.quota import QuotaObservation
 from sports_engine.quota.budget import QuotaBudget, QuotaPolicy
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
@@ -60,6 +66,32 @@ def test_safe_server_error_is_retried(tmp_path: Path) -> None:
     assert client.get("/fixtures", {}, purpose="retry", priority=Priority.P1) == []
     assert calls == 2
     assert connection.execute("SELECT http_status FROM api_request_log").fetchone() == (200,)
+    client.close()
+    connection.close()
+
+
+def test_discretionary_retry_cannot_cross_the_protected_quota_reserve(tmp_path: Path) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            503,
+            headers={
+                "x-ratelimit-requests-limit": "100",
+                "x-ratelimit-requests-remaining": "10",
+                "x-ratelimit-limit": "10",
+                "x-ratelimit-remaining": "5",
+            },
+            json={"error": "temporary"},
+        )
+
+    client, connection = make_client(tmp_path, httpx.MockTransport(handler), retries=2)
+    client.quota_budget.update(QuotaObservation(100, 11, 10, 6, client.quota_budget.clock()))
+    with pytest.raises(QuotaExhaustedError, match="daily reserve"):
+        client.get("/fixtures", {}, purpose="reserved_retry", priority=Priority.P5)
+    assert calls == 1
     client.close()
     connection.close()
 

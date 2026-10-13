@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+import sports_engine.warehouse.backup as backup_module
 from sports_engine.core.enums import Priority
 from sports_engine.core.exceptions import (
     NoEligibleModelError,
@@ -186,12 +187,42 @@ def test_quality_integrity_and_backup_verification(tmp_path: Path) -> None:
     (project / "config" / "app.yaml").write_text("mode: development\n", encoding="utf-8")
     destination = tmp_path / "backup"
     manifest = create_backup(project, database_path, destination)
-    assert json.loads(manifest.read_text())["schema_version"] == 33
+    assert json.loads(manifest.read_text())["schema_version"] == 34
     verified = verify_backup(destination)
     assert verified.valid
     assert verified.row_counts["fixtures"] == 0
     (destination / "config" / "app.yaml").write_text("tampered\n", encoding="utf-8")
     assert not verify_backup(destination).valid
+
+
+def test_backup_rejects_a_database_that_changes_during_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = tmp_path / "project"
+    database_path = project / "data" / "warehouse" / "sports.duckdb"
+    connection = connect(database_path)
+    migrate(connection)
+    connection.close()
+    digests = iter(("stable-before", "stable-before", "changed-after"))
+    monkeypatch.setattr(backup_module, "_file_digest", lambda _path: next(digests))
+
+    with pytest.raises(ValueError, match="changed while the backup database was being copied"):
+        create_backup(project, database_path, tmp_path / "backup")
+
+
+def test_backup_verification_accepts_verified_pre_migration_snapshot(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    database_path = project / "data" / "warehouse" / "sports.duckdb"
+    connection = connect(database_path)
+    migrate(connection)
+    connection.execute("DELETE FROM schema_versions WHERE version=34")
+    connection.close()
+    (project / "config").mkdir(parents=True)
+    (project / "config" / "app.yaml").write_text("mode: development\n", encoding="utf-8")
+
+    destination = tmp_path / "backup"
+    manifest = create_backup(project, database_path, destination)
+
+    assert json.loads(manifest.read_text())["schema_version"] == 33
+    assert verify_backup(destination).valid
 
 
 def test_integrity_allows_incomplete_optional_enrichment_for_eligible_result(tmp_path: Path) -> None:

@@ -1,9 +1,11 @@
+import json
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from sports_engine.core.cleanup import cleanup_generated_files
 from sports_engine.core.config import load_config
 from sports_engine.core.paths import project_root
 from sports_engine.warehouse.backup import create_backup, verify_backup
@@ -39,6 +41,51 @@ def integrity() -> None:
         table.add_row(issue.severity, issue.check, str(issue.count))
     console.print(table)
     raise typer.Exit(1)
+
+
+@app.command("cleanup")
+def cleanup_command(
+    apply: bool = typer.Option(False, "--apply", help="Delete eligible generated files; default is dry-run."),
+    older_than_days: int | None = typer.Option(
+        None,
+        "--older-than-days",
+        min=0,
+        max=365,
+        help="Override cleanup.retention_days for this invocation.",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Inspect or remove expired, regenerable development and test artifacts."""
+    config = load_config()
+    result = cleanup_generated_files(config, retention_days=older_than_days, apply=apply)
+    payload = {
+        "mode": "apply" if apply else "dry-run",
+        "eligible": [
+            {
+                "path": str(candidate.path),
+                "bytes": candidate.bytes,
+                "newest_modified_at": candidate.newest_modified_at.isoformat(),
+            }
+            for candidate in result.candidates
+        ],
+        "removed": [str(path) for path in result.removed],
+        "bytes_removed": result.bytes_removed,
+        "errors": list(result.errors),
+    }
+    if as_json:
+        console.print_json(json.dumps(payload))
+    else:
+        action = "Removed" if apply else "Would remove"
+        console.print(
+            f"{action} {len(result.removed) if apply else len(result.candidates)} generated targets "
+            f"({result.bytes_removed if apply else sum(item.bytes for item in result.candidates):,} bytes)."
+        )
+        for candidate in result.candidates:
+            console.print(f"- {candidate.path} ({candidate.bytes:,} bytes)")
+        for error in result.errors:
+            console.print(f"[red]{error}[/]")
+    if result.errors:
+        raise typer.Exit(1)
 
 
 @app.command("backup")

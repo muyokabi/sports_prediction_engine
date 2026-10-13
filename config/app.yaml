@@ -6,6 +6,10 @@ state_dir: state
 logs_dir: logs
 database_path: data/warehouse/sports.duckdb
 raw_retention_days: null
+cleanup:
+  enabled: true
+  interval_hours: 24
+  retention_days: 7
 http:
   timeout_seconds: 30.0
   retry_count: 3

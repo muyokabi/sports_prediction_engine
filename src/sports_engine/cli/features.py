@@ -19,8 +19,7 @@ def build(
         False,
         "--include-observation-leagues",
         help=(
-            "Include discovery observation leagues in a research dataset; "
-            "production training uses ACTIONABLE leagues."
+            "Include discovery observation leagues in a research dataset; production training uses ACTIONABLE leagues."
         ),
     ),
 ) -> None:

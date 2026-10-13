@@ -31,27 +31,49 @@ class BackupVerification:
     errors: tuple[str, ...]
 
 
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def create_backup(project_root: Path, database_path: Path, destination: Path) -> Path:
     if destination.exists() and any(destination.iterdir()):
         raise ValueError(f"Backup destination is not empty: {destination}")
     destination.mkdir(parents=True, exist_ok=True)
     connection = connect(database_path)
-    connection.execute("CHECKPOINT")
-    versions = applied_migrations(connection)
-    counts = {}
-    for table in COUNT_TABLES:
-        row = connection.execute(f"SELECT count(*) FROM {table}").fetchone()
-        counts[table] = int(row[0]) if row else 0
-    connection.close()
+    try:
+        connection.execute("CHECKPOINT")
+        versions = applied_migrations(connection)
+        counts = {}
+        for table in COUNT_TABLES:
+            row = connection.execute(f"SELECT count(*) FROM {table}").fetchone()
+            counts[table] = int(row[0]) if row else 0
+        integrity_issues = [
+            {"check": issue.check, "count": issue.count, "severity": issue.severity}
+            for issue in audit_integrity(connection, project_root)
+        ]
+    finally:
+        connection.close()
     database_target = destination / "data" / "warehouse" / database_path.name
     database_target.parent.mkdir(parents=True, exist_ok=True)
+    # DuckDB cannot keep its Windows file lock while shutil copies the file.
+    # Hashing immediately before and after the copy makes the operation
+    # fail closed if another process acquires the warehouse and changes it.
+    source_digest_before = _file_digest(database_path)
     shutil.copy2(database_path, database_target)
+    target_digest = _file_digest(database_target)
+    source_digest_after = _file_digest(database_path)
+    if source_digest_before != source_digest_after or target_digest != source_digest_before:
+        raise ValueError("Warehouse changed while the backup database was being copied")
     for relative in (Path("data/raw"), Path("data/parquet"), Path("artifacts/models"), Path("config")):
         source = project_root / relative
         if source.exists():
             shutil.copytree(source, destination / relative, dirs_exist_ok=True)
     files = {
-        str(path.relative_to(destination)).replace("\\", "/"): hashlib.sha256(path.read_bytes()).hexdigest()
+        str(path.relative_to(destination)).replace("\\", "/"): _file_digest(path)
         for path in destination.rglob("*")
         if path.is_file()
     }
@@ -67,6 +89,7 @@ def create_backup(project_root: Path, database_path: Path, destination: Path) ->
         "created_at": datetime.now(UTC).isoformat(),
         "schema_version": max(versions, default=0),
         "row_counts": counts,
+        "integrity_issues": integrity_issues,
         "database": str(database_target.relative_to(destination)).replace("\\", "/"),
         "files": files,
         "required_artifacts": required_artifacts,
@@ -86,7 +109,7 @@ def verify_backup(destination: Path) -> BackupVerification:
         path = destination / relative
         if not path.is_file():
             errors.append(f"missing file: {relative}")
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        elif _file_digest(path) != expected:
             errors.append(f"hash mismatch: {relative}")
         else:
             verified += 1
@@ -105,16 +128,33 @@ def verify_backup(destination: Path) -> BackupVerification:
             connection = connect(database_path, read_only=True)
             versions = applied_migrations(connection)
             schema_version = max(versions, default=0)
-            expected_version = len(discover_migrations())
-            if schema_version != expected_version or schema_version != manifest["schema_version"]:
-                errors.append(f"schema version mismatch: backup={schema_version}, expected={expected_version}")
+            available = discover_migrations()
+            expected_version = int(manifest["schema_version"])
+            if schema_version != expected_version:
+                errors.append(f"schema version mismatch: backup={schema_version}, manifest={expected_version}")
+            elif schema_version > len(available):
+                errors.append(
+                    f"backup schema {schema_version} is newer than available migrations {len(available)}"
+                )
+            else:
+                expected_prefix = {item.version: item.checksum for item in available[:schema_version]}
+                if versions != expected_prefix:
+                    errors.append("backup migration history does not match the available migration prefix")
             for table, expected in manifest["row_counts"].items():
                 row = connection.execute(f"SELECT count(*) FROM {table}").fetchone()
                 counts[table] = int(row[0]) if row else 0
                 if counts[table] != expected:
                     errors.append(f"row count mismatch for {table}: {counts[table]} != {expected}")
-            for issue in audit_integrity(connection, destination):
-                errors.append(f"integrity failure {issue.check}: {issue.count}")
+            actual_issues = [
+                {"check": issue.check, "count": issue.count, "severity": issue.severity}
+                for issue in audit_integrity(connection, destination)
+            ]
+            expected_issues = manifest.get("integrity_issues", [])
+            if actual_issues != expected_issues:
+                errors.append(
+                    "backup integrity state differs from source: "
+                    f"backup={actual_issues}, source={expected_issues}"
+                )
             connection.close()
         except Exception as exc:
             errors.append(f"DuckDB validation failed: {exc}")

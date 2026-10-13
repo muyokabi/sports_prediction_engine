@@ -111,6 +111,12 @@ class ProviderAccessConfig(BaseModel):
     replay_season: int = Field(default=2024, ge=2000, le=2100)
 
 
+class CleanupConfig(BaseModel):
+    enabled: bool = True
+    interval_hours: PositiveInt = 24
+    retention_days: int = Field(default=7, ge=0, le=365)
+
+
 class AppConfig(BaseModel):
     mode: ApplicationMode = ApplicationMode.DEVELOPMENT
     timezone: str = "UTC"
@@ -120,6 +126,7 @@ class AppConfig(BaseModel):
     logs_dir: Path = Path("logs")
     database_path: Path = Path("data/warehouse/sports.duckdb")
     raw_retention_days: PositiveInt | None = None
+    cleanup: CleanupConfig = CleanupConfig()
     http: HttpConfig = HttpConfig()
     quota: QuotaConfig = QuotaConfig()
     features: FeatureConfig = FeatureConfig()

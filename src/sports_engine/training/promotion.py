@@ -231,9 +231,7 @@ def _assess_candidate(
         int(_number(report_baseline.get("rows")) or 0),
     )
     baseline_available = baseline_rows >= policy.minimum_baseline_rows
-    baseline_required = (
-        policy.market_baseline_mode == "required" or policy.require_significant_market_outperformance
-    )
+    baseline_required = policy.market_baseline_mode == "required" or policy.require_significant_market_outperformance
     baseline_passed = baseline_available or not baseline_required
     if not baseline_available and baseline_required:
         reasons.append("INSUFFICIENT_POINT_IN_TIME_MARKET_BASELINE")
@@ -344,7 +342,10 @@ def _persist_assessment(
     assessed_at: datetime,
 ) -> None:
     evaluation_path = str(assessment.evaluation_path) if assessment.evaluation_path else ""
-    key = f"{assessment.version}:{assessment.market_family}:{policy.policy_version}:{evaluation_path}"
+    key = (
+        f"{assessment.version}:{assessment.market_family}:{policy.policy_version}:"
+        f"{evaluation_path}:{assessed_at.isoformat()}"
+    )
     assessment_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sports-engine:promotion:{key}"))
     calibration_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sports-engine:calibration:{key}"))
     role_name = f"{assessment.market_family}_CHAMPION"
@@ -358,8 +359,7 @@ def _persist_assessment(
     try:
         connection.execute(
             "INSERT INTO model_promotion_assessments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (assessment_id) DO UPDATE SET state=excluded.state, reason_codes=excluded.reason_codes, "
-            "gate_results=excluded.gate_results, assessed_at=excluded.assessed_at",
+            "ON CONFLICT (assessment_id) DO NOTHING",
             [
                 assessment_id,
                 assessment.version,
@@ -390,7 +390,7 @@ def _persist_assessment(
         )
         if assessment.state == "PROMOTED":
             prior = connection.execute(
-                "SELECT model_version FROM model_market_roles WHERE market_family=? AND role_name=? "
+                "SELECT model_version, model_type FROM model_market_roles WHERE market_family=? AND role_name=? "
                 "AND state='CHAMPION' AND model_version<>? ORDER BY selected_at DESC LIMIT 1",
                 [assessment.market_family, role_name, assessment.version],
             ).fetchone()
@@ -399,6 +399,25 @@ def _persist_assessment(
                 "WHERE market_family=? AND role_name=? AND state='CHAMPION' AND model_version<>?",
                 [assessed_at, assessment.market_family, role_name, assessment.version],
             )
+            if prior:
+                _persist_role_event(
+                    connection,
+                    market_family=assessment.market_family,
+                    role_name=role_name,
+                    model_version=str(prior[0]),
+                    model_type=str(prior[1]),
+                    state="RESEARCH_ONLY",
+                    event_type="SUPERSEDED",
+                    assessment_id=assessment_id,
+                    occurred_at=assessed_at,
+                    evidence={"superseded_by": assessment.version},
+                )
+                _revoke_pending_production_opportunities(
+                    connection,
+                    model_version=str(prior[0]),
+                    assessed_at=assessed_at,
+                    reason="MODEL_ROLE_SUPERSEDED",
+                )
             metrics = {
                 **metrics,
                 "uncertainty_policy": {
@@ -440,6 +459,12 @@ def _persist_assessment(
                 "UPDATE model_runs SET status='candidate' WHERE version=? AND status='champion'",
                 [assessment.version],
             )
+            _revoke_pending_production_opportunities(
+                connection,
+                model_version=assessment.version,
+                assessed_at=assessed_at,
+                reason="MODEL_ROLE_REVOKED",
+            )
             role_state = "CHALLENGER"
         connection.execute(
             "INSERT INTO model_market_roles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -460,10 +485,81 @@ def _persist_assessment(
                 assessed_at,
             ],
         )
+        _persist_role_event(
+            connection,
+            market_family=assessment.market_family,
+            role_name=role_name,
+            model_version=assessment.version,
+            model_type=assessment.model_type,
+            state=role_state,
+            event_type="PROMOTED" if assessment.state == "PROMOTED" else "WITHHELD",
+            assessment_id=assessment_id,
+            occurred_at=assessed_at,
+            evidence={"policy_version": policy.policy_version, "reasons": assessment.reasons},
+        )
         connection.commit()
     except Exception:
         connection.rollback()
         raise
+
+
+def _persist_role_event(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    market_family: str,
+    role_name: str,
+    model_version: str,
+    model_type: str,
+    state: str,
+    event_type: str,
+    assessment_id: str,
+    occurred_at: datetime,
+    evidence: dict[str, Any],
+) -> None:
+    event_key = f"{model_version}:{role_name}:{event_type}:{assessment_id}:{occurred_at.isoformat()}"
+    connection.execute(
+        "INSERT INTO model_market_role_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (event_id) DO NOTHING",
+        [
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"sports-engine:role-event:{event_key}")),
+            market_family,
+            role_name,
+            model_version,
+            model_type,
+            state,
+            event_type,
+            assessment_id,
+            occurred_at,
+            _json(evidence),
+        ],
+    )
+
+
+def _revoke_pending_production_opportunities(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    model_version: str,
+    assessed_at: datetime,
+    reason: str,
+) -> None:
+    rows = connection.execute(
+        "SELECT CAST(o.opportunity_id AS VARCHAR), o.reason_codes "
+        "FROM institutional_opportunities o "
+        "JOIN institutional_predictions p USING (prediction_id) "
+        "JOIN fixtures f ON f.fixture_id=p.target_fixture_id "
+        "WHERE p.fundamental_model_version=? "
+        "AND o.governance_state='PRODUCTION_ACTIONABLE' AND f.kickoff_utc>?",
+        [model_version, assessed_at],
+    ).fetchall()
+    for opportunity_id, raw_reasons in rows:
+        parsed = json.loads(raw_reasons) if isinstance(raw_reasons, str) else raw_reasons
+        reasons = list(parsed) if isinstance(parsed, list) else []
+        reasons.append(reason)
+        connection.execute(
+            "UPDATE institutional_opportunities SET governance_state='RESEARCH_VALUE_SIGNAL', "
+            "decision='NO_BET', reason_codes=? WHERE opportunity_id=?",
+            [_json(list(dict.fromkeys(reasons))), opportunity_id],
+        )
 
 
 def _latest_report(

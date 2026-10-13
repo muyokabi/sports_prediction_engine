@@ -12,6 +12,7 @@ from typing import Any
 import duckdb
 import polars as pl
 
+from sports_engine.core.ids import canonical_id
 from sports_engine.evaluation.leakage_audit import audit_feature_names, audit_observation_times
 
 
@@ -279,20 +280,48 @@ class PointInTimeFeatureBuilder:
     def _training_modes(self, primary: str) -> tuple[str, ...]:
         return tuple(dict.fromkeys((primary, *self.historical_ledger_modes)))
 
-    def _matches(self, ledger_modes: tuple[str, ...]) -> list[dict[str, Any]]:
+    def count_training_observations(self, ledger_mode: str) -> int:
+        """Count the exact completed-score population used by ``build``.
+
+        Detailed-match quality rows enrich features but are not required for
+        reconstructable result facts.  Keeping this query on the same scope
+        builder as ``_matches`` prevents the continuous-learning scheduler
+        from drifting away from the dataset it is deciding whether to build.
+        """
+        scope, parameters = self._training_scope(self._training_modes(ledger_mode))
+        row = self.connection.execute(
+            "SELECT count(*) FROM fixtures_current f "
+            "JOIN competition_seasons cs USING (competition_season_id) "
+            f"WHERE {scope}",
+            parameters,
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def _training_scope(self, ledger_modes: tuple[str, ...]) -> tuple[str, list[Any]]:
         placeholders = ",".join("?" for _ in ledger_modes)
-        universe_clause = ""
-        parameters = list(ledger_modes)
+        clauses = [f"cs.ledger_mode IN ({placeholders})"]
+        parameters: list[Any] = list(ledger_modes)
         if self.replay_universe_states:
             state_placeholders = ",".join("?" for _ in self.replay_universe_states)
-            universe_clause = (
-                "AND (cs.ledger_mode<>'replay' OR EXISTS ("
+            clauses.append(
+                "(cs.ledger_mode<>'replay' OR EXISTS ("
                 "SELECT 1 FROM competition_discoveries cd "
                 "JOIN competition_seasons discovered_cs USING (competition_season_id) "
                 "WHERE discovered_cs.competition_id=cs.competition_id "
-                f"AND cd.universe_state IN ({state_placeholders}))) "
+                f"AND cd.universe_state IN ({state_placeholders})))"
             )
             parameters.extend(self.replay_universe_states)
+        clauses.extend(
+            (
+                "f.status_short IN ('FT','AET','PEN')",
+                "f.home_goals IS NOT NULL",
+                "f.away_goals IS NOT NULL",
+            )
+        )
+        return " AND ".join(clauses), parameters
+
+    def _matches(self, ledger_modes: tuple[str, ...]) -> list[dict[str, Any]]:
+        scope, parameters = self._training_scope(ledger_modes)
         rows = self.connection.execute(
             "SELECT CAST(f.fixture_id AS VARCHAR), f.kickoff_utc, "
             "CAST(f.home_team_id AS VARCHAR), CAST(f.away_team_id AS VARCHAR), "
@@ -313,10 +342,7 @@ class PointInTimeFeatureBuilder:
             "GROUP BY fixture_id, team_id) hp ON hp.fixture_id=f.fixture_id AND hp.team_id=f.home_team_id "
             "LEFT JOIN (SELECT fixture_id, team_id, avg(rating) player_rating FROM player_match_statistics "
             "GROUP BY fixture_id, team_id) ap ON ap.fixture_id=f.fixture_id AND ap.team_id=f.away_team_id "
-            f"WHERE cs.ledger_mode IN ({placeholders}) "
-            f"{universe_clause}"
-            "AND f.status_short IN ('FT','AET','PEN') "
-            "AND f.home_goals IS NOT NULL AND f.away_goals IS NOT NULL ORDER BY f.kickoff_utc",
+            f"WHERE {scope} ORDER BY f.kickoff_utc",
             parameters,
         ).fetchall()
         result: list[dict[str, Any]] = []
@@ -407,14 +433,16 @@ class PointInTimeFeatureBuilder:
 
     def _odds_features(self, fixture_id: str, prediction_time: datetime) -> dict[str, Any]:
         rows = self.connection.execute(
-            "WITH latest AS (SELECT max(observed_at) observed_at FROM odds_snapshots "
+            "WITH scoped AS (SELECT max(observed_at) latest_at FROM odds_snapshots "
             "WHERE fixture_id=? AND observed_at<=?) "
-            "SELECT s.normalized_name, avg(p.fair_probability), min(o.observed_at), max(o.observed_at) "
-            "FROM odds_snapshots o JOIN latest l USING (observed_at) JOIN odds_prices p USING (snapshot_id) "
+            "SELECT s.normalized_name, "
+            "avg(p.fair_probability) FILTER (WHERE o.observed_at=scoped.latest_at), "
+            "min(o.observed_at), max(o.observed_at) "
+            "FROM odds_snapshots o CROSS JOIN scoped JOIN odds_prices p USING (snapshot_id) "
             "JOIN bet_markets m USING (market_id) JOIN bet_selections s USING (selection_id) "
-            "WHERE o.fixture_id=? AND lower(m.name) IN ('match winner', '1x2') "
+            "WHERE o.fixture_id=? AND o.observed_at<=? AND lower(m.name) IN ('match winner', '1x2') "
             "GROUP BY s.normalized_name",
-            [fixture_id, prediction_time, fixture_id],
+            [fixture_id, prediction_time, fixture_id, prediction_time],
         ).fetchall()
         values = {row[0]: row[1] for row in rows}
         return {
@@ -427,20 +455,25 @@ class PointInTimeFeatureBuilder:
 
     def _availability_features(self, match: dict[str, Any], prediction_time: datetime) -> dict[str, Any]:
         collection = self.connection.execute(
-            "SELECT count(*) FROM injury_collection_runs WHERE target_date=CAST(? AS DATE) "
+            "SELECT max(observed_at) FROM injury_collection_runs WHERE target_date=CAST(? AS DATE) "
             "AND observed_at<=? AND complete",
             [match["kickoff_utc"], prediction_time],
         ).fetchone()
-        known = bool(collection and collection[0])
+        latest_observation = collection[0] if collection else None
+        known = latest_observation is not None
         result: dict[str, Any] = {"player_availability_known": known}
         for prefix in ("home", "away"):
             team_id = match[f"{prefix}_team_id"]
-            injuries = self.connection.execute(
-                "SELECT count(DISTINCT player_id) FROM injury_observations "
-                "WHERE provider_fixture_id=(SELECT provider_fixture_id FROM fixtures WHERE fixture_id=?) "
-                "AND CAST(team_id AS VARCHAR)=? AND observed_at<=?",
-                [match["fixture_id"], team_id, prediction_time],
-            ).fetchone()
+            injuries = (
+                self.connection.execute(
+                    "SELECT count(DISTINCT player_id) FROM injury_observations "
+                    "WHERE provider_fixture_id=(SELECT provider_fixture_id FROM fixtures WHERE fixture_id=?) "
+                    "AND CAST(team_id AS VARCHAR)=? AND observed_at=?",
+                    [match["fixture_id"], team_id, latest_observation],
+                ).fetchone()
+                if known
+                else None
+            )
             injured = int(injuries[0]) if injuries else 0
             squad = self.connection.execute(
                 "SELECT count(*) FROM squad_players WHERE snapshot_id=("
@@ -459,20 +492,31 @@ class PointInTimeFeatureBuilder:
         for prefix in ("home", "away"):
             team_id = match[f"{prefix}_team_id"]
             observation = self.connection.execute(
-                "SELECT count(*) FROM lineup_observations lo JOIN lineups l USING (lineup_id) "
-                "WHERE l.fixture_id=? AND CAST(l.team_id AS VARCHAR)=? AND lo.observed_at<=?",
+                "SELECT lo.source_payload FROM lineup_observations lo JOIN lineups l USING (lineup_id) "
+                "WHERE l.fixture_id=? AND CAST(l.team_id AS VARCHAR)=? AND lo.observed_at<=? "
+                "ORDER BY lo.observed_at DESC, lo.observation_id DESC LIMIT 1",
                 [match["fixture_id"], team_id, prediction_time],
             ).fetchone()
-            team_known = bool(observation and observation[0])
+            team_known = observation is not None and observation[0] is not None
             known = known and team_known
-            if not team_known:
+            if observation is None or observation[0] is None:
                 strengths[prefix] = None
                 continue
+            source_payload = observation[0]
+            if isinstance(source_payload, str):
+                source_payload = json.loads(source_payload)
+            player_ids = self._lineup_player_ids(source_payload)
+            if not player_ids:
+                strengths[prefix] = None
+                continue
+            placeholders = ",".join("?" for _ in player_ids)
             rating = self.connection.execute(
-                "SELECT avg(pms.rating) FROM lineup_players lp JOIN lineups l USING (lineup_id) "
-                "JOIN player_match_statistics pms ON pms.player_id=lp.player_id "
-                "WHERE l.fixture_id=? AND CAST(l.team_id AS VARCHAR)=? AND pms.retrieved_at<=?",
-                [match["fixture_id"], team_id, prediction_time],
+                "SELECT avg(pms.rating) FROM player_match_statistics pms "
+                "JOIN fixtures_current f USING (fixture_id) "
+                f"WHERE CAST(pms.player_id AS VARCHAR) IN ({placeholders}) "
+                "AND f.status_short IN ('FT','AET','PEN') "
+                "AND f.kickoff_utc + INTERVAL 4 HOUR<=? AND pms.rating IS NOT NULL",
+                [*player_ids, prediction_time],
             ).fetchone()
             strengths[prefix] = float(rating[0]) if rating and rating[0] is not None else None
         return {
@@ -480,6 +524,23 @@ class PointInTimeFeatureBuilder:
             "away_lineup_strength": strengths["away"],
             "lineup_strength_known": known,
         }
+
+    @staticmethod
+    def _lineup_player_ids(source_payload: object) -> tuple[str, ...]:
+        """Recover membership from the exact point-in-time lineup observation."""
+        if not isinstance(source_payload, dict):
+            return ()
+        player_ids: list[str] = []
+        for section in ("startXI", "substitutes"):
+            rows = source_payload.get(section)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                player = row.get("player") if isinstance(row, dict) else None
+                provider_id = player.get("id") if isinstance(player, dict) else None
+                if isinstance(provider_id, int) and provider_id > 0:
+                    player_ids.append(str(canonical_id("player", "api_football", provider_id)))
+        return tuple(dict.fromkeys(player_ids))
 
     @staticmethod
     def _update_elo(ratings: dict[str, float], match: dict[str, Any]) -> None:

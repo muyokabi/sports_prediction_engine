@@ -44,6 +44,25 @@ API_FOOTBALL_MARKETS: dict[int, CanonicalMarket] = {
     92: CanonicalMarket(92, "Anytime Goal Scorer", "ANYTIME_SCORER", "PLAYER", MarketState.RESEARCH_ONLY, None),
 }
 
+DOUBLE_CHANCE_SELECTIONS = {
+    "HOME OR DRAW": "HOME/DRAW",
+    "HOME/DRAW": "HOME/DRAW",
+    "1X": "HOME/DRAW",
+    "HOME OR AWAY": "HOME/AWAY",
+    "HOME/AWAY": "HOME/AWAY",
+    "12": "HOME/AWAY",
+    "DRAW OR AWAY": "DRAW/AWAY",
+    "DRAW/AWAY": "DRAW/AWAY",
+    "X2": "DRAW/AWAY",
+}
+
+
+def canonical_selection(canonical_market: str, provider_selection: str) -> str:
+    normalized = " ".join(provider_selection.upper().split())
+    if canonical_market == "DOUBLE_CHANCE":
+        return DOUBLE_CHANCE_SELECTIONS.get(normalized, normalized)
+    return normalized
+
 
 def classify_api_football_market(provider_market_id: int, provider_name: str) -> CanonicalMarket:
     market = API_FOOTBALL_MARKETS.get(provider_market_id)

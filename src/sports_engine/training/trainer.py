@@ -190,18 +190,26 @@ class ModelTrainer:
         evaluation_training_cutoff = max(times[index] for index in fold.train)
         deployment_training_start = min(times[index] for index in fold.train)
         deployment_training_end = evaluation_training_cutoff
-        if model_type in {"elo", "poisson", "dixon-coles"}:
-            model, deployment_hyperparameters = self._refit_statistical_for_deployment(
-                model_type,
-                dataset.frame,
-                hyperparameters,
-            )
+        if training_mode == "full_refit":
+            if model_type in {"elo", "poisson", "dixon-coles"}:
+                model, deployment_hyperparameters = self._refit_statistical_for_deployment(
+                    model_type,
+                    dataset.frame,
+                    hyperparameters,
+                )
+            else:
+                model, deployment_hyperparameters = self._refit_ml_for_deployment(
+                    model_type,
+                    dataset.frame,
+                    hyperparameters,
+                    feature_columns,
+                )
             hyperparameters = {**hyperparameters, **deployment_hyperparameters}
             deployment_training_start = min(times)
             deployment_training_end = max(times)
             test_metrics["deployment_refit"] = {
                 "performed": True,
-                "protocol": "evaluate-on-untouched-holdout-then-refit-all-observations",
+                "protocol": "evaluate-on-untouched-holdout-freeze-hyperparameters-then-refit-all-observations",
                 "evaluation_training_cutoff": evaluation_training_cutoff.isoformat(),
                 "deployment_training_cutoff": deployment_training_end.isoformat(),
                 "deployment_rows": dataset.frame.height,
@@ -380,6 +388,43 @@ class ModelTrainer:
             )
         metadata["deployment_refit_rows"] = frame.height
         return model, metadata
+
+    def _refit_ml_for_deployment(
+        self,
+        model_type: str,
+        frame: pl.DataFrame,
+        selected_hyperparameters: dict[str, Any],
+        feature_columns: list[str],
+    ) -> tuple[Any, dict[str, Any]]:
+        """Fit the immutable deployment candidate after holdout evaluation.
+
+        Model selection and calibration remain based on chronological
+        validation/test evidence. Only the already-selected specification is
+        refitted, so no holdout metric is recomputed or optimized here.
+        """
+        matrix = frame.select(feature_columns).cast(pl.Float64).to_numpy()
+        targets = self._targets(frame)
+        if model_type == "logistic":
+            model: Any = LogisticProbabilityModel(
+                random_seed=self.random_seed,
+                c=float(selected_hyperparameters.get("C", 1.0)),
+            )
+        elif model_type == "catboost":
+            model = CatBoostProbabilityModel(
+                random_seed=self.random_seed,
+                threads=self.cpu_threads,
+                iterations=int(selected_hyperparameters.get("iterations", 300)),
+            )
+        elif model_type == "lightgbm":
+            model = LightGBMProbabilityModel(
+                random_seed=self.random_seed,
+                threads=self.cpu_threads,
+                n_estimators=int(selected_hyperparameters.get("n_estimators", 300)),
+            )
+        else:  # pragma: no cover - caller is restricted to registered ML types
+            raise ValueError(f"Unsupported ML deployment refit type {model_type!r}")
+        model.fit(matrix, targets)
+        return model, {**model.metadata(), "deployment_refit_rows": frame.height}
 
     def _fit(
         self,

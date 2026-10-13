@@ -20,6 +20,7 @@
 ## Table of contents
 
 - [What the engine does](#what-the-engine-does)
+- [Current operating status](#current-operating-status)
 - [The three-price operating model](#the-three-price-operating-model)
 - [Architecture and data flow](#architecture-and-data-flow)
 - [Quick start](#quick-start)
@@ -32,6 +33,7 @@
 - [Configuration](#configuration)
 - [Reports and artifacts](#reports-and-artifacts)
 - [Backup, recovery, and integrity](#backup-recovery-and-integrity)
+- [Generated-file retention](#generated-file-retention)
 - [Development and verification](#development-and-verification)
 - [Troubleshooting](#troubleshooting)
 - [Repository layout](#repository-layout)
@@ -54,6 +56,23 @@ Its production workflow:
 9. writes persisted decisions, price targets, provenance, and an interactive HTML report.
 
 The current fundamental board supports seven selections per analyzed fixture: home/draw/away, over/under 2.5, and both-teams-to-score yes/no. Settlement utilities also support push, half-win, half-loss, and Asian quarter-line economics.
+
+## Current operating status
+
+**`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`** (verified 2026-10-13,
+Africa/Nairobi).
+
+The engine currently produces research probabilities and fair prices, but no
+market family has an active champion. The previous Dixon-Coles match-odds
+champion was demoted because the required timestamp-correct market baseline had
+zero rows. It remains available as a qualified research score model, so the
+missing production role does not suppress fixture pricing. `RESEARCH_ONLY`,
+`RESEARCH_VALUE_SIGNAL`, `PRICE_TARGET`, and `SHADOW_ACTIONABLE` are not betting
+approval.
+
+See [Current Implementation Status](docs/reports/CURRENT_IMPLEMENTATION_STATUS.md)
+for the latest reconciled warehouse counts and acceptance evidence. Do not copy
+those changing counts into operating decisions without rechecking the warehouse.
 
 ## The three-price operating model
 
@@ -127,7 +146,7 @@ The canonical write path is `immutable raw response -> validated envelope -> nor
 - [`uv`](https://docs.astral.sh/uv/) for environment and command execution.
 - API-Football v3 credentials for live collection. Offline analysis and normal tests need no network.
 
-### Fresh-clone setup, in order
+### Fresh-clone setup
 
 ```powershell
 git clone https://github.com/muyokabi/sports_prediction_engine.git
@@ -139,20 +158,33 @@ Copy-Item .env.example .env
 Set `API_FOOTBALL_KEY=replace-with-your-key` in `.env`. Never commit secrets.
 
 ```powershell
-# 1. Create/upgrade the warehouse and verify local configuration.
+# Create/upgrade the warehouse and verify local configuration.
 uv run sports-engine data migrate
-uv run sports-engine doctor --connectivity --verify-current-season
+uv run sports-engine doctor
 uv run sports-engine data integrity
 
-# 2. Discover the provider catalog, select a governed 40-league collection
-#    universe, fetch each league's latest five completed seasons, and enrich it.
-#    This is resumable but can run for hours and consume substantial quota.
+# With API credentials configured, refresh plan/quota state. The explicit
+# current-season probe spends one provider request and is not a daily command.
+uv run sports-engine doctor --connectivity
+uv run sports-engine doctor --connectivity --verify-current-season
+```
+
+At this point the application and warehouse are initialized. A fresh warehouse
+still needs historical fixture evidence and at least one qualified score model
+before it can price fixtures. The following is the full historical bootstrap,
+not part of ordinary daily operation:
+
+```powershell
+# Discover the catalog, select up to 40 governed collection leagues, fetch each
+# league's latest five completed seasons, and spend at most 5,000 requests on
+# detailed enrichment. Coverage and fixture-skeleton calls are outside that cap.
 uv run sports-engine football fetch-backfill --past-seasons 5 --max-requests 5000
 
-# 3. Build one current + replay dataset and evaluate all supported models.
+# Build one current + replay dataset, train/evaluate all six model families,
+# and run fail-closed promotion assessment.
 uv run sports-engine models train-historical
 
-# 4. Run the normal live workflow and produce tomorrow's research report.
+# Run the normal live workflow and produce tomorrow's research report.
 uv run sports-engine run --date tomorrow
 ```
 
@@ -166,8 +198,8 @@ If the historical setup is interrupted, rerun the identical command. Use
 `--no-discovery`, `--no-coverage`, or `--no-bootstrap` only for deliberate
 checkpoint recovery, not for the first run.
 
-The request cap is a real ceiling, not a promise that five seasons across 40
-leagues will fit into 5,000 calls. The command now prints
+The detailed-enrichment request cap is a real ceiling, not a promise that five
+seasons across 40 leagues will fit into 5,000 total provider calls. The command prints
 `detail_coverage`, `pending_repair`, and `unassessed`. A successful run means
 its bounded tranche completed safely; if either outstanding count is non-zero,
 rerun the same command to continue. Fixture skeletons can cover all five
@@ -220,6 +252,11 @@ uv run sports-engine football backfill
 # Monthly, or before/after a major data/model change
 uv run sports-engine evaluate --all
 uv run sports-engine backtest --all
+uv run sports-engine models list --json
+uv run sports-engine models assess-promotions --json
+
+# Champion-only diagnostic. This currently exits with status 2 because the
+# audited system has no champion; use it only after a governed promotion.
 uv run sports-engine models reliability --json
 
 # Only when intentionally adding depth from an already registered replay season;
@@ -253,11 +290,11 @@ uv run sports-engine models --help
 | `sports-engine run --date tomorrow` | Live collection and analysis for tomorrow |
 | `sports-engine run --date YYYY-MM-DD --days N` | Explicit inclusive window, 1–31 days |
 | `sports-engine run --date … --offline` | Persisted evidence only; no provider calls |
-| `sports-engine daily` | Principal idempotent football maintenance |
+| `sports-engine daily` | Alias for principal football maintenance; it does not render the institutional HTML report |
 | `sports-engine models assess-promotions` | Re-run audited fail-closed ML promotion assessment |
 | `sports-engine doctor` | Local configuration, schema, directory, and state checks |
-| `sports-engine doctor --connectivity` | Also verify provider connectivity |
-| `sports-engine doctor --connectivity --verify-current-season` | Explicit current-season probe |
+| `sports-engine doctor --connectivity` | Refresh quota-free provider subscription status |
+| `sports-engine doctor --connectivity --verify-current-season` | Also spend one request on an exact competition-season access probe |
 
 ### Provider and quota
 
@@ -267,6 +304,12 @@ uv run sports-engine api quota --json
 uv run sports-engine api capabilities
 uv run sports-engine api capabilities --json
 ```
+
+`api quota` reads the last persisted observation and makes no provider request.
+`api capabilities` calls API-Football `/status`, updates persisted capability
+metadata, and reports production and replay access separately. Use `doctor
+--connectivity --verify-current-season` when an actual current-season access
+probe is required.
 
 ### League discovery and admission inspection
 
@@ -304,6 +347,12 @@ uv run sports-engine football fetch-backfill --season 2023 --max-requests 250
 uv run sports-engine football fetch-backfill --past-seasons 5 --max-requests 5000
 uv run sports-engine football fetch-backfill --season 2023 --no-coverage
 uv run sports-engine football fetch-backfill --season 2023 --no-bootstrap
+
+# Two-step compatibility workflow for a single replay season. Prefer
+# fetch-backfill --season for new work unless registration and enrichment must
+# be deliberately separated.
+uv run sports-engine football historical-register --season 2023
+uv run sports-engine football historical-backfill --season 2023 --max-requests 250
 
 # Mutable results and season lifecycle
 uv run sports-engine football reconcile
@@ -363,6 +412,13 @@ available. Provider season coverage flags are planning hints, not guarantees
 that every fixture contains every component. Historical pre-match odds cannot be
 reconstructed: API-Football retains `/odds` observations for only seven days, so
 the daily workflow must collect and preserve them prospectively.
+
+The narrower commands have different limits: `football enrich --limit N`
+selects 1–200 completed fixtures; `football historical-backfill` requires a
+previously registered replay season and accepts a 1–5,000 hard request cap;
+standalone `football backfill` uses `backfill.maximum_requests_per_run` from
+configuration (currently 1,000). The maintenance embedded in the daily workflow
+uses the smaller `maximum_daily_requests_per_run` limit (currently 100).
 
 ### Features, training, and calibration
 
@@ -443,7 +499,11 @@ uv run sports-engine models promote <candidate-version>
 uv run sports-engine models reject <candidate-version>
 ```
 
-Promotion requires held-out probability-quality evidence. Profit alone is never a promotion criterion.
+`models promote` is not an override: despite its compatibility-oriented name,
+it runs the same automated fail-closed governance assessment and exits without
+promotion if any required gate fails. `models reliability` requires an active
+champion and currently exits with status 2. Promotion requires held-out
+probability-quality evidence; profit alone is never a promotion criterion.
 
 ### Prediction compatibility workflow
 
@@ -459,8 +519,11 @@ The institutional `run` report is the preferred full-universe workflow. The pred
 ```powershell
 uv run sports-engine data migrate
 uv run sports-engine data integrity
-uv run sports-engine data backup D:\sports-engine-backups\2026-10-08
-uv run sports-engine data verify-backup D:\sports-engine-backups\2026-10-08
+uv run sports-engine data cleanup
+uv run sports-engine data cleanup --apply
+$backup = 'D:\sports-engine-backups\YYYY-MM-DD'
+uv run sports-engine data backup $backup
+uv run sports-engine data verify-backup $backup
 ```
 
 ## Market-reference semantics
@@ -554,7 +617,7 @@ Development uses an explicitly configured replay season and labels its rows `rep
 
 ## Reports and artifacts
 
-Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation. New model and evaluation artifacts use the same `YYYY/MM/DD` partition beneath their category; registry paths and recursive discovery retain compatibility with older flat artifacts.
+Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation. The `Top Research` view shows at most ten selections, one per fixture, ordered first by applicability quality and then by the conservative index `model probability - uncertainty buffer`. It is a probability-research summary, not a betting/value ranking or confidence interval; prior-only and out-of-domain rows remain visibly labelled. New model and evaluation artifacts use the same `YYYY/MM/DD` partition beneath their category; registry paths and recursive discovery retain compatibility with older flat artifacts.
 
 | Path | Contents |
 |---|---|
@@ -571,7 +634,7 @@ Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` 
 Stop running jobs before a coherent backup:
 
 ```powershell
-$backup = 'D:\sports-engine-backups\2026-10-08-schema-26'
+$backup = 'D:\sports-engine-backups\YYYY-MM-DD'
 uv run sports-engine data backup $backup
 uv run sports-engine data verify-backup $backup
 ```
@@ -580,6 +643,22 @@ Verification hashes every copied file, validates schema and row counts, opens co
 
 > [!WARNING]
 > Raw payloads, odds snapshots, predictions, decisions, and registered artifacts are audit history. Do not prune or rewrite them without an explicit retention and governance decision.
+
+## Generated-file retention
+
+`sports-engine data cleanup` is dry-run by default. Add `--apply` to remove
+allowlisted, regenerable files older than `cleanup.retention_days` (seven days in
+the checked-in configuration), or use `--older-than-days 0` for a deliberate
+one-off post-test cleanup. The daily workflow invokes the same cleanup at most
+once per configured 24-hour interval.
+
+Eligible targets are pytest run directories under `.tmp/` and `state/`, standard
+pytest/mypy/Ruff/coverage caches, `src`/`tests` bytecode caches, and explicitly
+named test/build scratch directories. The cleanup service has no rule capable of
+targeting raw provider evidence, the DuckDB warehouse, Parquet datasets,
+quarantine evidence, models, evaluations, backtests, reports, backups,
+checkpoints, active locks, or logs. Operational log retention remains the
+existing size-based rotation policy in `config/logging.yaml`.
 
 ## Development and verification
 
