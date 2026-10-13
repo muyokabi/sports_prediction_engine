@@ -9,6 +9,7 @@ from typing import Any
 import duckdb
 
 from sports_engine.core.config import AppConfig, ModelPromotionConfig
+from sports_engine.models.serialization import verify_artifact_digest
 from sports_engine.training.evidence import load_evidence_policies
 
 ML_MODEL_TYPES = ("logistic", "catboost", "lightgbm")
@@ -46,8 +47,8 @@ def run_automated_promotion(
 
     A role is granted only when the configured evidence policy passes. Historical
     bookmaker comparison is enforced whenever point-in-time API-Football evidence
-    exists; deployments may explicitly use an ``when_available`` baseline policy
-    when that sole provider did not publish the required historical snapshots.
+    exists. A ``when_available`` policy can omit that gate only when significant
+    market outperformance is not itself configured as a promotion requirement.
     """
     policy = config.models.promotion
     if not policy.enabled:
@@ -59,7 +60,7 @@ def run_automated_promotion(
         parameters.extend(versions)
     rows = connection.execute(
         "SELECT version, model_type, metrics, calibration_method, training_dataset_hash, evidence_state, "
-        "coalesce(training_mode, 'unknown') "
+        "coalesce(training_mode, 'unknown'), artifact_path "
         "FROM model_runs WHERE (status='candidate' OR (status='champion' AND EXISTS ("
         "SELECT 1 FROM model_market_roles r WHERE r.model_version=model_runs.version "
         "AND r.market_family=? AND r.state='CHAMPION'))) AND model_type IN "
@@ -79,6 +80,7 @@ def run_automated_promotion(
             dataset_hash=str(row[4]),
             evidence_state=str(row[5]) if row[5] else None,
             training_mode=str(row[6]),
+            artifact_path=Path(str(row[7])),
             assessed_at=now or datetime.now(UTC),
         )
         for row in rows
@@ -105,12 +107,30 @@ def _assess_candidate(
     dataset_hash: str,
     evidence_state: str | None,
     training_mode: str,
+    artifact_path: Path,
     assessed_at: datetime,
 ) -> PromotionAssessment:
     report_path, report = _latest_report(evaluation_dir, model_type, dataset_hash, version)
     aggregate = _mapping(report.get("aggregate_metrics")) if report else {}
     evidence_policy = load_evidence_policies()[model_type]
     reasons: list[str] = []
+
+    artifact_integrity_passed = True
+    artifact_integrity_error: str | None = None
+    manifest_path = artifact_path.with_suffix(artifact_path.suffix + ".json")
+    try:
+        verify_artifact_digest(artifact_path, require_digest=True)
+        if calibration_method:
+            verify_artifact_digest(
+                artifact_path.parent / "calibrator.pkl",
+                metadata_path=manifest_path,
+                hash_field="calibrator_sha256",
+                require_digest=True,
+            )
+    except (OSError, ValueError) as exc:
+        artifact_integrity_passed = False
+        artifact_integrity_error = str(exc)
+        reasons.append("ARTIFACT_INTEGRITY_NOT_VERIFIED")
 
     # Walk-forward reports reconstruct a fresh candidate for every historical
     # fold. They are valid promotion evidence for full refits, but cannot prove
@@ -211,8 +231,11 @@ def _assess_candidate(
         int(_number(report_baseline.get("rows")) or 0),
     )
     baseline_available = baseline_rows >= policy.minimum_baseline_rows
-    baseline_passed = baseline_available or policy.market_baseline_mode == "when_available"
-    if not baseline_available and policy.market_baseline_mode == "required":
+    baseline_required = (
+        policy.market_baseline_mode == "required" or policy.require_significant_market_outperformance
+    )
+    baseline_passed = baseline_available or not baseline_required
+    if not baseline_available and baseline_required:
         reasons.append("INSUFFICIENT_POINT_IN_TIME_MARKET_BASELINE")
     if baseline_available and not _better(metrics, candidate_baseline):
         baseline_passed = False
@@ -236,6 +259,12 @@ def _assess_candidate(
         reasons.append("INCUMBENT_NOT_OUTPERFORMED")
 
     gates: dict[str, Any] = {
+        "artifact_integrity": {
+            "passed": artifact_integrity_passed,
+            "artifact_path": str(artifact_path),
+            "manifest_path": str(manifest_path),
+            "error": artifact_integrity_error,
+        },
         "training_protocol": {
             "passed": training_protocol_passed,
             "mode": training_mode,
@@ -269,6 +298,7 @@ def _assess_candidate(
         "market_baseline": {
             "passed": baseline_passed,
             "available": baseline_available,
+            "required": baseline_required,
             "mode": policy.market_baseline_mode,
             "rows": baseline_rows,
             "candidate_holdout": candidate_baseline,

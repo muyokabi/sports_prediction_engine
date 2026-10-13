@@ -9,6 +9,7 @@ from rich.table import Table
 from sports_engine.cli.runtime import open_database, provider_client
 from sports_engine.core.config import Environment, load_config
 from sports_engine.core.enums import Priority
+from sports_engine.providers.api_football.access import production_access_probe
 from sports_engine.providers.api_football.endpoints import Endpoint
 from sports_engine.providers.api_football.errors import ApiFootballPlanRestrictionError
 from sports_engine.warehouse.connection import connect
@@ -72,11 +73,10 @@ def run_doctor(connectivity: bool = False, verify_current_season: bool = False) 
             ).fetchone()
             with provider_client(config, connection) as client:
                 capabilities = client.get_status(purpose="doctor_connectivity")
-                production = connection.execute(
-                    "SELECT provider_season FROM competition_seasons "
-                    "WHERE ledger_mode='production' ORDER BY provider_season DESC LIMIT 1"
-                ).fetchone()
-                production_season = int(production[0]) if production else datetime.now(ZoneInfo(config.timezone)).year
+                production_probe = production_access_probe(
+                    connection,
+                    datetime.now(ZoneInfo(config.timezone)).year,
+                )
                 subscription_changed = bool(
                     prior and prior[0] and capabilities.subscription_plan and prior[0] != capabilities.subscription_plan
                 )
@@ -85,7 +85,7 @@ def run_doctor(connectivity: bool = False, verify_current_season: bool = False) 
                     try:
                         teams = client.get(
                             Endpoint.TEAMS,
-                            {"league": 39, "season": production_season},
+                            {"league": production_probe.league, "season": production_probe.season},
                             purpose="doctor_current_season_access",
                             priority=Priority.P0,
                         )
@@ -95,12 +95,7 @@ def run_doctor(connectivity: bool = False, verify_current_season: bool = False) 
                         current_access = False
                         current_access_detail = f"BLOCKED_BY_PROVIDER_PLAN ({exc.provider_message})"
                 else:
-                    stored = connection.execute(
-                        "SELECT bool_or(provider_accessible) FROM competition_seasons "
-                        "WHERE ledger_mode='production' AND provider_season=?",
-                        [production_season],
-                    ).fetchone()
-                    current_access = bool(stored and stored[0])
+                    current_access = production_probe.stored_accessible is True
                     current_access_detail = (
                         "previously verified available"
                         if current_access
@@ -115,7 +110,8 @@ def run_doctor(connectivity: bool = False, verify_current_season: bool = False) 
             detail = (
                 f"plan={capabilities.subscription_plan or 'unknown'}; "
                 f"daily={capabilities.requests_used_today}/{capabilities.daily_limit}; "
-                f"production {production_season} access={current_access_detail}; "
+                f"production league={production_probe.league} season={production_probe.season} "
+                f"access={current_access_detail}; "
                 f"replay {config.provider_access.replay_season} access="
                 f"{('available' if replay[0] else 'blocked') if replay else 'not audited'}"
             )

@@ -15,5 +15,8 @@ Migration 022 adds governed market mappings, date-range analysis runs, full-univ
 prediction metadata, dependency/freshness state, exact source snapshots, engine independence labels, and per-engine market
 prices. Existing prediction tables are preserved for compatibility and historical evidence.
 
-The current operational evidence gate remains 500 training fixtures. The production ledger has 276 eligible fixtures, so no
-institutional fused price or wagering recommendation is authorized.
+The current ledger has 18,767 quality-assessed, ML-eligible completed fixtures across production and replay evidence. A
+chronologically evaluated score model is available for research pricing, but there is no active market-family champion: the
+configured `MATCH_ODDS` promotion policy requires a point-in-time API-Football baseline and statistically significant market
+outperformance, while the persisted evaluation has zero qualifying baseline rows. The engine therefore continues to publish
+research probabilities and coherent score-derived fair prices, but no fused price or real-money recommendation is authorized.

@@ -30,18 +30,43 @@ def load_pickle(
     without a digest so immutable local history remains usable.
     """
     payload = path.read_bytes()
-    manifest_path = metadata_path or path.with_suffix(path.suffix + ".json")
-    if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"Invalid artifact manifest: {manifest_path}") from exc
-        expected = manifest.get(hash_field) if isinstance(manifest, dict) else None
-        if expected is not None:
-            actual = sha256(payload).hexdigest()
-            if not isinstance(expected, str) or actual != expected:
-                raise ValueError(f"Artifact integrity check failed: {path}")
+    verify_artifact_digest(path, metadata_path=metadata_path, hash_field=hash_field, payload=payload)
     return pickle.loads(payload)
+
+
+def verify_artifact_digest(
+    path: Path,
+    *,
+    metadata_path: Path | None = None,
+    hash_field: str = "artifact_sha256",
+    require_digest: bool = False,
+    payload: bytes | None = None,
+) -> bool:
+    """Verify an artifact digest without deserializing the artifact.
+
+    Legacy hashless artifacts remain readable for research continuity. Production
+    governance can set ``require_digest`` so missing integrity evidence fails closed.
+    """
+
+    artifact_payload = payload if payload is not None else path.read_bytes()
+    manifest_path = metadata_path or path.with_suffix(path.suffix + ".json")
+    if not manifest_path.is_file():
+        if require_digest:
+            raise ValueError(f"Artifact integrity manifest is missing: {manifest_path}")
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Invalid artifact manifest: {manifest_path}") from exc
+    expected = manifest.get(hash_field) if isinstance(manifest, dict) else None
+    if expected is None:
+        if require_digest:
+            raise ValueError(f"Artifact digest {hash_field!r} is missing: {manifest_path}")
+        return False
+    actual = sha256(artifact_payload).hexdigest()
+    if not isinstance(expected, str) or actual != expected:
+        raise ValueError(f"Artifact integrity check failed: {path}")
+    return True
 
 
 def write_artifact_metadata(path: Path, metadata: dict[str, Any]) -> None:

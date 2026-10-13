@@ -75,3 +75,17 @@ def test_ml_rejects_a_constant_feature_matrix() -> None:
     )
     assert assessment.state == EvidenceState.INSUFFICIENT_DATA
     assert "NO_INFORMATIVE_MODEL_FEATURES" in assessment.reasons
+
+
+def test_ml_evidence_treats_nan_as_missing_provider_data() -> None:
+    frame = _frame(120, features=0).with_columns(pl.lit(float("nan")).alias("unavailable_market_feature"))
+    assessment = assess_model_evidence(
+        "logistic",
+        frame,
+        load_evidence_policies()["logistic"],
+        feature_columns=["unavailable_market_feature"],
+    )
+    assert assessment.measurements["missing_fraction"] == 1.0
+    assert assessment.measurements["informative_feature_count"] == 0
+    assert "EXCESSIVE_FEATURE_MISSINGNESS" in assessment.reasons
+    assert "NO_INFORMATIVE_MODEL_FEATURES" in assessment.reasons

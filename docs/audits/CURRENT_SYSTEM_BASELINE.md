@@ -1,42 +1,71 @@
 # Current System Baseline — Pre-Upgrade Evidence
 
-Captured 2026-10-11 (Africa/Nairobi) before the changes in the autonomous audit. This is deliberately a historical baseline, not a statement of the final state. See `docs/reports/AUTONOMOUS_INSTITUTIONAL_CODEBASE_UPGRADE_REPORT.md` for post-upgrade evidence.
+Captured 2026-10-12 17:00 Africa/Nairobi from the production DuckDB ledger before this audit changed production logic. This snapshot supersedes the 2026-10-11 baseline. Counts were reproduced with `scripts/warehouse_audit.py` and direct read-only SQL against `data/warehouse/sports.duckdb`.
 
 ## Classification at capture
 
-`RESEARCH_ONLY / FAIL_CLOSED`
+`RESEARCH + EARLY SHADOW / REAL-MONEY STATUS REQUIRES RE-AUDIT`
 
-The warehouse had substantial match history, but the normal workflow had not populated competition discovery or odds. A Dixon-Coles artifact was registered as champion even though its chronological probability-forensics verdict failed. Research predictions existed, but they had no usable market-reference evidence.
+The code is fail-closed in several important paths and has a newly selected match-odds champion, but the prospective market ledger spans only 2026-10-11 through 2026-10-12, no shadow opportunity has settled, and three records are already labelled `PRODUCTION_ACTIONABLE`. Those labels require adversarial re-verification before they can support a real-money claim.
 
-## Architecture
+## Architecture and workflow
 
-The supported flow was immutable raw API evidence, validated normalization, DuckDB operational state, point-in-time feature datasets, chronological training/evaluation, governed registry selection, persisted analysis, and standalone HTML. Production targets and replay history were separated by `ledger_mode`; DuckDB used a serialized single-writer process.
+`API-Football -> immutable compressed raw payloads -> validated normalization -> DuckDB ledger -> point-in-time Parquet features -> immutable model/evaluation artifacts -> fixture applicability -> settlement-aware prices -> reference comparison -> governed opportunities -> HTML research report`.
+
+The principal command is `sports-engine run --date ...`. The configured production workflow performs discovery, current fixture/result/injury/odds collection, bounded repair, due model maintenance, analysis, persistence, reporting, and post-run integrity. Replay and production evidence are separated by `competition_seasons.ledger_mode`. DuckDB writes are serialized by orchestration locks.
 
 ## Verified warehouse at capture
 
 | Evidence | Value |
 |---|---:|
-| Distinct competitions / competition seasons | 10 / 60 |
-| Teams / fixtures / completed | 279 / 19,774 / 17,179 |
-| Quality assessed / ML eligible / pending repair | 8,946 / 8,197 / 749 |
-| Production seasons / fixtures / completed / ML eligible | 10 / 3,174 / 584 / 186 |
-| Replay seasons / fixtures / completed / ML eligible | 50 / 16,600 / 16,595 / 8,011 |
-| Odds snapshots / prices / bookmakers / markets | 0 / 0 / 0 / 0 |
-| Feature datasets / model runs | 4 / 22 |
-| Institutional predictions / opportunities | 6 / 42 |
-| Competition-discovery rows | 0 |
-| Validated competition probability scopes | 40 |
+| Competitions / competition seasons | 1,241 / 1,442 |
+| Teams | 869 |
+| Fixtures / completed | 58,650 / 55,732 |
+| Production fixtures / completed / ML eligible | 3,194 / 584 / 584 |
+| Replay fixtures / completed / ML eligible | 55,456 / 55,148 / 18,183 |
+| Quality-assessed / ML eligible | 18,767 / 18,767 |
+| Completed replay fixtures not yet assessed | 36,965 |
+| Odds snapshots / prices / covered fixtures | 33 / 108,309 / 22 |
+| Bookmakers / provider markets observed | 10 / 182 |
+| Feature datasets / model runs | 9 / 53 |
+| Institutional predictions / opportunities | 56 / 2,009 |
+| Shadow opportunities / settled shadow | 34 / 0 |
+| Competition states | 10 actionable, 66 observation, 1,062 discovered, 104 rejected |
+| Applicability rows | 56 |
+| Duplicate probability/xG clusters | 7 clusters / 38 rows |
 
-“Five seasons” meant five historical seasons for each of ten statically configured leagues: 50 replay competition-seasons. It did not mean five seasons for the provider's full league catalog.
+## Models and governance at capture
 
-## Material pre-upgrade defects
+- Registered families: Elo, Poisson, Dixon-Coles, logistic regression, CatBoost, and LightGBM.
+- Match-odds roles: one `CHAMPION`, 38 `CHALLENGER`, four `RESEARCH_ONLY`.
+- Calibration records: 35 validated and 16 failed, all for `MATCH_ODDS`.
+- Competition probability scopes: 253 validated, 30 failed, 11 insufficient-sample.
+- Persisted opportunity states: three production-actionable, seven shadow-actionable, 548 research value signals, and 1,451 research-only/no-reference price targets.
+- Only match odds has a governed champion. Score-derived BTTS and total-goals prices exist, but no independent BTTS or totals champion/calibration role exists.
 
-1. Discovery was only a specialist command. Neither the principal daily path nor `football fetch-backfill` invoked it.
-2. Odds collection required an `ACTIONABLE` discovery row, so the empty discovery table produced zero request scopes and silently made no odds calls.
-3. The five-season backfill always read the ten-entry YAML seed list.
-4. Promotion checked several aggregate metrics but ignored the evaluator's explicit failed `probability_forensics` verdict, allowing an invalid incumbent champion to remain selected.
-5. README commands were individually documented but not arranged as a safe, complete fresh-clone sequence.
+## Data completeness at capture
+
+All 18,767 assessed packages are labelled `ML_ELIGIBLE`. Component coverage is uneven: final score/events/cards/lineups are almost complete, team statistics are complete for 16,886 packages, and player statistics for 15,212. The most recent five-season/40-league backfill used 2,659 provider calls and explicitly reported 41,245 historical detail items remaining; 36,965 completed replay fixtures remain unassessed in the current ledger.
+
+## Operator and report evidence
+
+The latest complete live runs were:
+
+- 2026-10-12: six requested and six terminal fixtures, report `analysis-2026-10-12-2026-10-12-99ca616b-95ac-4dfc-927e-60b466395ec7.html`;
+- 2026-10-13: 19 requested and 19 terminal fixtures, report `analysis-2026-10-13-2026-10-13-56bfd60b-debe-44c6-83d4-58bae4fa1dfb.html`.
+
+The latest live principal run succeeded and persisted six odds snapshots. The two real HTML reports above are inputs to this audit; their fixture, opportunity, and model-health claims must reconcile to the ledger.
+
+## Initial high-risk hypotheses
+
+1. **P1 evidence sufficiency:** real-money labels exist despite only two days of prospective odds and no settled shadow record. Verify that model promotion and production opportunity gates do not overstate the evidence.
+2. **P1 market-family governance:** a score-model match-odds champion is used to price BTTS and totals, while calibration/role lookup is market-family-specific and currently absent for those families. Confirm they cannot become production actionable.
+3. **P1 duplicate decisions:** seven repeated probability/xG clusters cover 38 applicability rows. Distinguish legitimate repricing from generic or duplicated predictions and ensure exposure remains fixture-deduplicated.
+4. **P1 ledger semantics:** all assessed packages are now ML-eligible even where player/team-stat components are missing. Verify this is the documented tiered eligibility contract and cannot leak missing values or future observations.
+5. **P2 historical completeness:** 36,965 completed replay fixtures are unassessed. Quantify whether score-only training uses them safely and whether detailed-feature training silently excludes or imputes them.
+6. **P2 market evidence:** 22 fixtures with odds cannot establish a market baseline, closing-price result, or threshold robustness.
+7. **P2 operational warning:** current daily runs ignore 155 injury rows for unknown teams. Verify this is visible and fail-safe for affected fixtures.
 
 ## Preserved evidence
 
-The verified pre-governance backup is `artifacts/backups/autonomous-upgrade-2026-10-11-pre-governance`. It contains schema 33, 2,865 files, and verified counts for nine critical tables.
+The production warehouse and immutable artifacts present at capture are authoritative. No historical prediction or model artifact was rewritten to produce this baseline. The machine-readable companion is `docs/audits/CURRENT_SYSTEM_BASELINE.json`.

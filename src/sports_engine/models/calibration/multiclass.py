@@ -43,8 +43,17 @@ class MulticlassProbabilityCalibrator:
                 values = estimator.predict(probabilities[:, index])  # type: ignore[attr-defined]
             columns.append(values)
         calibrated = np.column_stack(columns)
+        if not np.all(np.isfinite(calibrated)):
+            raise ValueError("Calibrator produced non-finite probabilities")
+        if np.any(calibrated < 0):
+            raise ValueError("Calibrator produced negative probabilities")
         totals = calibrated.sum(axis=1, keepdims=True)
-        return np.divide(calibrated, totals, out=np.full_like(calibrated, 1 / 3), where=totals > 0)
+        if np.any(totals <= 0):
+            raise ValueError("Calibrator produced zero probability mass")
+        normalized = calibrated / totals
+        if not np.allclose(normalized.sum(axis=1), 1.0):
+            raise ValueError("Calibrated probabilities do not form a simplex")
+        return normalized
 
     @staticmethod
     def _logit(values: np.ndarray) -> np.ndarray:

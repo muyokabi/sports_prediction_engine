@@ -201,7 +201,7 @@ uv run sports-engine run --date today
 
 These live commands are autonomous: preflight, catch-up, settlement, ledger repair, a bounded maintenance tranche, due-only model retraining, chronological evaluation, audited champion promotion, fresh requested-date odds, full-universe pricing, and the HTML report all run in sequence. Routine historical repair is capped at 100 API requests per invocation so delivery cannot silently become a full archive rebuild. `run --offline` deliberately skips provider calls, maintenance, training, and promotion and is visibly labelled `OFFLINE REPLAY`.
 
-A live `run` selects only an audited market-role champion. Promotion requires probability integrity, chronological holdout and walk-forward uncertainty, calibration, fixture applicability, competition-specific validation, and incumbent quality. A timestamp-correct bookmaker baseline is compared whenever API-Football supplied enough historical snapshots; its absence is recorded as unavailable rather than falsely interpreted as model failure. Every assessment is persisted with gate evidence and reason codes.
+A live `run` always separates probability production from real-money governance. When a qualified score model exists it prices the requested fixtures even if no market-role champion exists; those outputs remain research prices. Promotion to a market role additionally requires probability integrity, chronological holdout and walk-forward uncertainty, calibration, fixture applicability, competition-specific validation, and incumbent quality. When policy requires significant market outperformance, an unavailable timestamp-correct API-Football baseline fails promotion rather than silently passing. Every assessment is persisted with gate evidence and reason codes.
 
 ### Occasional diagnostics — run separately
 
@@ -558,7 +558,7 @@ Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` 
 
 | Path | Contents |
 |---|---|
-| `artifacts/models/YYYY/MM/DD/` | Immutable version directories, models, calibrators, and hash-bearing manifests |
+| `artifacts/models/YYYY/MM/DD/` | Immutable version directories, models, calibrators, and hash-bearing manifests; production promotion requires verified model/calibrator digests |
 | `artifacts/evaluation/YYYY/MM/DD/` | Walk-forward and calibration evidence |
 | `artifacts/backtests/` | Historical decision simulations |
 | `artifacts/reports/YYYY/MM/DD/` | HTML analysis and acceptance evidence |

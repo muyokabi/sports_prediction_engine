@@ -1,36 +1,65 @@
 {
-  "captured_at": "2026-10-11",
-  "timezone": "Africa/Nairobi",
-  "snapshot_phase": "PRE_UPGRADE",
-  "classification": "RESEARCH_ONLY_FAIL_CLOSED",
-  "warehouse": {
-    "competitions": 10,
-    "competition_seasons": 60,
-    "teams": 279,
-    "fixtures": 19774,
-    "completed_fixtures": 17179,
-    "quality_assessed": 8946,
-    "ml_eligible": 8197,
-    "pending_repair": 749,
-    "odds_snapshots": 0,
-    "odds_prices": 0,
-    "bookmakers": 0,
-    "provider_markets": 0,
-    "feature_datasets": 4,
-    "model_runs": 22,
-    "institutional_predictions": 6,
-    "institutional_opportunities": 42
+  "captured_at": "2026-10-12T17:00:00+03:00",
+  "classification": "RESEARCH_AND_EARLY_SHADOW_REAL_MONEY_REQUIRES_REAUDIT",
+  "database": "data/warehouse/sports.duckdb",
+  "counts": {
+    "competitions": 1241,
+    "competition_seasons": 1442,
+    "teams": 869,
+    "fixtures": 58650,
+    "completed": 55732,
+    "quality_assessed": 18767,
+    "ml_eligible": 18767,
+    "production_fixtures": 3194,
+    "production_completed": 584,
+    "production_ml_eligible": 584,
+    "replay_fixtures": 55456,
+    "replay_completed": 55148,
+    "replay_ml_eligible": 18183,
+    "replay_unassessed_completed": 36965,
+    "odds_snapshots": 33,
+    "odds_prices": 108309,
+    "fixtures_with_odds": 22,
+    "bookmakers": 10,
+    "provider_markets": 182,
+    "feature_datasets": 9,
+    "model_runs": 53,
+    "institutional_predictions": 56,
+    "institutional_opportunities": 2009,
+    "shadow_opportunities": 34,
+    "settled_shadow_opportunities": 0
   },
-  "ledgers": {
-    "production": {"competition_seasons": 10, "fixtures": 3174, "completed": 584, "ml_eligible": 186},
-    "replay": {"competition_seasons": 50, "fixtures": 16600, "completed": 16595, "ml_eligible": 8011}
+  "competition_states": {
+    "ACTIONABLE": 10,
+    "OBSERVATION": 66,
+    "DISCOVERED": 1062,
+    "REJECTED": 104
   },
   "governance": {
-    "competition_discovery_rows": 0,
-    "validated_competition_probability_scopes": 40,
-    "configured_seed_leagues": 10,
-    "replay_seasons_per_seed_league": 5,
-    "champion_probability_forensics_passed": false
+    "match_odds_champions": 1,
+    "match_odds_challengers": 38,
+    "calibration_validated": 35,
+    "calibration_failed": 16,
+    "competition_scopes_validated": 253,
+    "competition_scopes_failed": 30,
+    "competition_scopes_insufficient": 11,
+    "production_actionable_opportunities": 3,
+    "shadow_actionable_opportunities": 7
   },
-  "backup": "artifacts/backups/autonomous-upgrade-2026-10-11-pre-governance"
+  "anomalies": {
+    "duplicate_prediction_clusters": 7,
+    "rows_in_duplicate_prediction_clusters": 38,
+    "unknown_team_injury_rows_latest_daily_run": 155,
+    "prospective_odds_first_observed_at": "2026-10-11T18:36:38.722628+03:00",
+    "prospective_odds_last_observed_at": "2026-10-12T16:43:34.037605+03:00"
+  },
+  "latest_analysis": {
+    "analysis_run_id": "99ca616b-95ac-4dfc-927e-60b466395ec7",
+    "requested_start_date": "2026-10-12",
+    "requested_end_date": "2026-10-12",
+    "expected_fixture_count": 6,
+    "terminal_fixture_count": 6,
+    "state": "COMPLETE",
+    "report_mode": "LIVE"
+  }
 }

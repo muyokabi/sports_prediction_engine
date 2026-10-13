@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from sports_engine.models.serialization import load_pickle, save_pickle
+from sports_engine.models.serialization import load_pickle, save_pickle, verify_artifact_digest
 
 
 def test_new_pickle_artifact_is_hash_verified(tmp_path: Path) -> None:
@@ -24,3 +24,6 @@ def test_legacy_pickle_without_digest_remains_readable(tmp_path: Path) -> None:
     metadata_path = path.with_suffix(".pkl.json")
     metadata_path.write_text(json.dumps({"kind": "legacy"}), encoding="utf-8")
     assert load_pickle(path) == {"model": "legacy"}
+    assert verify_artifact_digest(path) is False
+    with pytest.raises(ValueError, match="digest.*missing"):
+        verify_artifact_digest(path, require_digest=True)

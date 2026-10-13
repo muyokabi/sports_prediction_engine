@@ -1,9 +1,21 @@
 # Codebase Satisfaction Statement
 
-Generated 2026-10-11 (Africa/Nairobi).
+Generated 2026-10-12 and independently re-audited 2026-10-13 (Africa/Nairobi).
 
-I am satisfied that the audited code now fixes the identified high-impact correctness and operator-workflow defects. Discovery is part of the principal and historical workflows, missing odds scope is explicit, backfill can grow beyond the ten seed leagues without bypassing actionability governance, and failed probability forensics invalidates both candidates and incumbents. The ordered README path is suitable for a fresh clone, and the live run proved discovery, odds collection, prediction persistence, complete-universe reconciliation, training, governance, and reporting against real persisted evidence.
+I audited the current repository, production warehouse, model registry, provider ledger, analysis runs, HTML artifacts, configuration, migrations, feature construction, model evidence, automated promotion, applicability, market-family decisions, odds semantics, risk gates, recovery behavior, and tests. I also researched API-Football's documented availability/retention constraints and primary sources on football score models, proper scoring, chronological validation, calibration, market benchmarks, uncertainty, risk, and DuckDB operation.
 
-I am not satisfied that the empirical evidence supports real-money use. The current warehouse has only seven prospective odds snapshots, no settled shadow sample, and no production champion after the invalid incumbent was correctly demoted. The 12 persisted predictions and 317 opportunities are research outputs; three current watch observations are shadow-only.
+The principal P1 defect was a contradiction in promotion governance: significant market outperformance was required, but an unavailable zero-row market baseline passed under `when_available`. That is fixed, regression-tested, applied to the production registry, and documented. The incumbent is no longer a champion. IEEE `NaN` omission from missingness evidence is also fixed. Every new feature dataset now carries a complete quality sidecar, and fitted-model manifests explain excluded features. The final re-audit additionally removed a silent uniform one-third fallback from multiclass calibration; invalid zero-mass output now fails explicitly instead of manufacturing decision-critical probabilities. Production promotion also now requires verified SHA-256 evidence for the model artifact and any calibrator: legacy hashless artifacts remain research-compatible but fail closed for actionability.
 
-Accordingly, the accepted state is `RESEARCH_ONLY / FAIL_CLOSED`. Continue normal prospective live runs to accumulate odds and settlements. Do not manually promote a model or reinterpret research price targets as executable bets. Production language remains prohibited until chronological probability, market-baseline, applicability, uncertainty, margin, and settled shadow evidence all pass.
+I am satisfied that the engine still fulfills its prediction purpose. A post-demotion offline run produced predictions for 19/19 fixtures and 707 prices; the final live run produced predictions for 19/19 fixtures and 837 prices with current references for all 19. Research predictions are not suppressed merely because a real-money evidence gate fails.
+
+The 2026-10-13 re-audit added live prospective observations and completed a fresh-ledger analysis with 19/19 processed manifests, 18 analyzed predictions, 791 prices, and zero production labels. One fixture was explicitly excluded as `STARTED` after kickoff rather than being silently priced from stale `NS` status. The provider ledger now covers 38 fixtures, but zero shadow observations are settled.
+
+I am satisfied that no known feasible P0 or P1 code-correctness defect remains from this audit. Duplicate prior-like outputs, cross-family actionability, unknown injury rows, competition governance, and report reconciliation were independently checked against persisted evidence. Material discoveries and “do not regress” invariants are recorded in `AGENTS.md`, the improvement register, the research log, and this report for future AI sessions.
+
+Final verification after the artifact-integrity upgrade produced 210 passing tests, clean Ruff and strict mypy results, a passing warehouse integrity audit, and a 12/12-fixture offline principal run with 519 research prices and zero production labels. Production reassessment followed a verified schema-33 backup and withheld all 49 candidates.
+
+I am **not** satisfied that current empirical evidence supports real-money use. Only 25 fixtures have prospective odds, no shadow observation is settled, and no model has demonstrated the required point-in-time market advantage. Unavailable historical odds/lineup/injury evidence cannot be invented.
+
+Final operational state: **`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`**.
+
+Continue normal live runs to accumulate reference odds and settlements. Do not manually promote a model, weaken the baseline requirement, or reinterpret `RESEARCH_VALUE_SIGNAL`, `PRICE_TARGET`, or `SHADOW_ACTIONABLE` as an executable bet.

@@ -1,4 +1,6 @@
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import typer
 from rich.console import Console
@@ -6,6 +8,7 @@ from rich.table import Table
 
 from sports_engine.cli.runtime import open_database, provider_client
 from sports_engine.core.config import load_config
+from sports_engine.providers.api_football.access import production_access_probe
 
 app = typer.Typer(help="Provider API status and quota accounting.")
 console = Console()
@@ -63,10 +66,7 @@ def capabilities(as_json: bool = typer.Option(False, "--json")) -> None:
     connection = open_database(config)
     with provider_client(config, connection) as client:
         observed = client.get_status(purpose="provider_capabilities")
-    production = connection.execute(
-        "SELECT provider_season, bool_or(provider_accessible) FROM competition_seasons "
-        "WHERE ledger_mode='production' GROUP BY provider_season ORDER BY provider_season DESC LIMIT 1"
-    ).fetchone()
+    production = production_access_probe(connection, datetime.now(ZoneInfo(config.timezone)).year)
     replay = connection.execute(
         "SELECT bool_or(provider_accessible) FROM competition_seasons WHERE ledger_mode='replay' AND provider_season=?",
         [config.provider_access.replay_season],
@@ -82,8 +82,9 @@ def capabilities(as_json: bool = typer.Option(False, "--json")) -> None:
         "daily_remaining": observed.daily_remaining,
         "minute_limit": observed.minute_limit,
         "minute_remaining": observed.minute_remaining,
-        "production_season": production[0] if production else None,
-        "production_access": "available" if production and production[1] else "blocked_or_unknown",
+        "production_probe_league": production.league,
+        "production_season": production.season,
+        "production_access": "available" if production.stored_accessible else "blocked_or_unknown",
         "replay_season": config.provider_access.replay_season,
         "replay_access": "available" if replay and replay[0] else "not_audited_or_blocked",
     }
@@ -94,7 +95,7 @@ def capabilities(as_json: bool = typer.Option(False, "--json")) -> None:
         "ORDER BY observed_at DESC LIMIT 1)",
         [
             payload["production_season"],
-            bool(production and production[1]),
+            production.stored_accessible is True,
             payload["replay_season"],
             bool(replay and replay[0]),
             raw[0] if raw else None,

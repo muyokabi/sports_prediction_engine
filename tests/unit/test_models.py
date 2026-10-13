@@ -71,6 +71,17 @@ def test_multiclass_calibration_preserves_probability_simplex(method: str) -> No
     assert np.all((calibrated >= 0) & (calibrated <= 1))
 
 
+def test_multiclass_calibration_rejects_zero_mass_instead_of_inventing_neutral_probabilities() -> None:
+    class ZeroEstimator:
+        def predict(self, probabilities: np.ndarray) -> np.ndarray:
+            return np.zeros(len(probabilities))
+
+    calibrator = MulticlassProbabilityCalibrator("isotonic", estimators=[ZeroEstimator()] * 3)
+
+    with pytest.raises(ValueError, match="zero probability mass"):
+        calibrator.transform(np.asarray([[0.5, 0.3, 0.2]]))
+
+
 def test_probability_integrity_rejects_malformed_rows_and_detects_collapse() -> None:
     valid = np.asarray([[0.5, 0.3, 0.2], [0.5, 0.3, 0.2]])
     audit = probability_integrity(valid)

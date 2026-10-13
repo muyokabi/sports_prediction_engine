@@ -1,9 +1,11 @@
 import json
+import pickle
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sports_engine.core.config import AppConfig
 from sports_engine.models.registry import ModelRegistry, ModelRun
+from sports_engine.models.serialization import save_pickle, write_artifact_metadata
 from sports_engine.training.promotion import run_automated_promotion
 from sports_engine.warehouse.connection import connect
 from sports_engine.warehouse.migrations import migrate
@@ -22,6 +24,10 @@ def _candidate(connection: object, tmp_path: Path, *, with_baseline: bool) -> st
     if with_baseline:
         metrics["bookmaker_baseline"] = {"log_loss": 1.05, "brier": 0.64, "rows": 250}
     now = datetime(2026, 1, 1, tzinfo=UTC)
+    artifact_path = tmp_path / "model.pkl"
+    save_pickle({"model": "candidate"}, artifact_path, {"kind": "test"})
+    (tmp_path / "calibrator.pkl").write_bytes(pickle.dumps({"calibrator": "test"}))
+    write_artifact_metadata(artifact_path, {"kind": "test"})
     ModelRegistry(connection).register(
         ModelRun(
             model_type="logistic",
@@ -34,7 +40,7 @@ def _candidate(connection: object, tmp_path: Path, *, with_baseline: bool) -> st
             hyperparameters={},
             metrics=metrics,
             calibration_method="platt",
-            artifact_path=tmp_path / "model.pkl",
+            artifact_path=artifact_path,
             library_versions={},
             git_commit=None,
             created_at=now,
@@ -156,7 +162,7 @@ def test_automated_promotion_withholds_without_market_baseline(tmp_path: Path) -
     connection.close()
 
 
-def test_when_available_policy_promotes_without_unobtainable_baseline(tmp_path: Path) -> None:
+def test_when_available_policy_requires_baseline_when_significant_outperformance_is_required(tmp_path: Path) -> None:
     connection = connect(tmp_path / "available-policy.duckdb")
     migrate(connection)
     version = _candidate(connection, tmp_path, with_baseline=False)
@@ -173,11 +179,40 @@ def test_when_available_policy_promotes_without_unobtainable_baseline(tmp_path: 
 
     result = run_automated_promotion(connection, config, now=datetime(2026, 1, 3, tzinfo=UTC))
 
+    assert result.promoted_versions == ()
+    assert result.withheld_versions == (version,)
+    assessment = result.assessments[0]
+    assert assessment.gate_results["market_baseline"]["passed"] is False
+    assert assessment.gate_results["market_baseline"]["available"] is False
+    assert assessment.gate_results["market_baseline"]["required"] is True
+    assert "INSUFFICIENT_POINT_IN_TIME_MARKET_BASELINE" in assessment.reasons
+    assert "BOOKMAKER_BASELINE_NOT_OUTPERFORMED" not in assessment.reasons
+    connection.close()
+
+
+def test_when_available_policy_can_omit_baseline_when_outperformance_is_not_required(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "optional-baseline-policy.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=False)
+    _report(tmp_path)
+    config = AppConfig(
+        artifacts_dir=tmp_path,
+        models={
+            "promotion": {
+                "market_baseline_mode": "when_available",
+                "require_significant_market_outperformance": False,
+                "eligible_model_types": ["logistic"],
+            }
+        },
+    )
+
+    result = run_automated_promotion(connection, config, now=datetime(2026, 1, 3, tzinfo=UTC))
+
     assert result.promoted_versions == (version,)
     assessment = result.assessments[0]
     assert assessment.gate_results["market_baseline"]["passed"] is True
     assert assessment.gate_results["market_baseline"]["available"] is False
-    assert "BOOKMAKER_BASELINE_NOT_OUTPERFORMED" not in assessment.reasons
+    assert assessment.gate_results["market_baseline"]["required"] is False
     connection.close()
 
 
@@ -210,6 +245,7 @@ def test_promotion_rejects_incremental_artifact_even_with_passing_report(tmp_pat
         models={
             "promotion": {
                 "market_baseline_mode": "when_available",
+                "require_significant_market_outperformance": False,
                 "eligible_model_types": ["logistic"],
             }
         },
@@ -244,6 +280,7 @@ def test_promotion_rejects_explicit_probability_forensics_failure(tmp_path: Path
         models={
             "promotion": {
                 "market_baseline_mode": "when_available",
+                "require_significant_market_outperformance": False,
                 "eligible_model_types": ["logistic"],
             }
         },
@@ -260,6 +297,64 @@ def test_promotion_rejects_explicit_probability_forensics_failure(tmp_path: Path
     connection.close()
 
 
+def test_promotion_rejects_hashless_legacy_artifact(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "hashless-artifact.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=False)
+    manifest_path = tmp_path / "model.pkl.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("artifact_sha256")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    _report(tmp_path)
+    config = AppConfig(
+        artifacts_dir=tmp_path,
+        models={
+            "promotion": {
+                "market_baseline_mode": "when_available",
+                "require_significant_market_outperformance": False,
+                "eligible_model_types": ["logistic"],
+            }
+        },
+    )
+
+    result = run_automated_promotion(connection, config)
+
+    assert result.promoted_versions == ()
+    assert result.withheld_versions == (version,)
+    assert "ARTIFACT_INTEGRITY_NOT_VERIFIED" in result.assessments[0].reasons
+    assert result.assessments[0].gate_results["artifact_integrity"]["passed"] is False
+    connection.close()
+
+
+def test_promotion_rejects_tampered_calibrator(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "tampered-calibrator.duckdb")
+    migrate(connection)
+    version = _candidate(connection, tmp_path, with_baseline=False)
+    calibrator_path = tmp_path / "calibrator.pkl"
+    payload = bytearray(calibrator_path.read_bytes())
+    payload[-1] ^= 1
+    calibrator_path.write_bytes(payload)
+    _report(tmp_path)
+    config = AppConfig(
+        artifacts_dir=tmp_path,
+        models={
+            "promotion": {
+                "market_baseline_mode": "when_available",
+                "require_significant_market_outperformance": False,
+                "eligible_model_types": ["logistic"],
+            }
+        },
+    )
+
+    result = run_automated_promotion(connection, config)
+
+    assert result.promoted_versions == ()
+    assert result.withheld_versions == (version,)
+    assert "ARTIFACT_INTEGRITY_NOT_VERIFIED" in result.assessments[0].reasons
+    assert "integrity check failed" in result.assessments[0].gate_results["artifact_integrity"]["error"]
+    connection.close()
+
+
 def test_reassessment_demotes_incumbent_when_forensics_later_fail(tmp_path: Path) -> None:
     connection = connect(tmp_path / "incumbent-reassessment.duckdb")
     migrate(connection)
@@ -270,6 +365,7 @@ def test_reassessment_demotes_incumbent_when_forensics_later_fail(tmp_path: Path
         models={
             "promotion": {
                 "market_baseline_mode": "when_available",
+                "require_significant_market_outperformance": False,
                 "eligible_model_types": ["logistic"],
             }
         },

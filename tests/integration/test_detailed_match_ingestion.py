@@ -1,4 +1,5 @@
 import copy
+import json
 from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -627,6 +628,14 @@ def test_point_in_time_dataset_reconstructs_prior_completed_match_facts(tmp_path
         for source, prediction in zip(frame["source_observation_max"], frame["prediction_timestamp"], strict=True)
     )
     assert connection.execute("SELECT count(*) FROM feature_datasets").fetchone() == (1,)
+    stored_config = json.loads(connection.execute("SELECT config FROM feature_datasets").fetchone()[0])
+    quality_path = Path(stored_config["feature_quality_audit_path"])
+    quality = json.loads(quality_path.read_text(encoding="utf-8"))
+    assert quality_path.is_file()
+    assert quality["dataset_hash"] == artifact.dataset_hash
+    assert quality["rows"] == 3
+    assert "bookmaker_home_fair" in quality["all_null_features"]
+    assert quality["features"]["bookmaker_home_fair"]["availability_semantics"] == "OBSERVED_POINT_IN_TIME"
     connection.close()
 
 

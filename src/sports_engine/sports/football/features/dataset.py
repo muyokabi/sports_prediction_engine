@@ -529,6 +529,13 @@ class PointInTimeFeatureBuilder:
             "time_sensitive_feature_provenance": "OBSERVED_POINT_IN_TIME",
             "completed_match_effective_time": "scheduled_kickoff_plus_4_hours",
         }
+        quality_path = path.with_suffix(path.suffix + ".feature-quality.json")
+        quality_payload = self._dataset_feature_quality(frame, dataset_hash, schema_hash)
+        quality_path.write_text(
+            json.dumps(quality_payload, indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
+        config["feature_quality_audit_path"] = str(quality_path)
         self.connection.execute(
             "INSERT INTO feature_datasets VALUES (?, ?, current_timestamp, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (dataset_id) DO NOTHING",
@@ -544,3 +551,63 @@ class PointInTimeFeatureBuilder:
             ],
         )
         return FeatureDatasetArtifact(str(dataset_id), frame.height, path, schema_hash, dataset_hash)
+
+    @staticmethod
+    def _dataset_feature_quality(
+        frame: pl.DataFrame,
+        dataset_hash: str,
+        schema_hash: str,
+    ) -> dict[str, Any]:
+        """Describe every candidate feature before model-specific selection.
+
+        Provider-dependent columns are deliberately retained in the dataset as
+        explicit unknowns.  This audit makes their absence visible without
+        pretending that an all-null column supplied training information.
+        """
+        excluded = {
+            "fixture_id",
+            "prediction_timestamp",
+            "home_team_id",
+            "away_team_id",
+            "source_observation_max",
+            "target_home_goals",
+            "target_away_goals",
+            "target_result",
+        }
+        features: dict[str, dict[str, float | int | str]] = {}
+        for name, dtype in frame.schema.items():
+            if name in excluded or not (dtype.is_numeric() or dtype in {pl.Boolean, pl.Null}):
+                continue
+            series = frame[name].fill_nan(None) if dtype.is_float() else frame[name]
+            observed = series.drop_nulls()
+            counts = observed.value_counts().get_column("count").to_list() if len(observed) else []
+            standard_deviation = observed.cast(pl.Float64).std() if len(observed) else None
+            if name.startswith(("bookmaker_", "odds_", "lineup_")) or "availability" in name or "injur" in name:
+                availability = "OBSERVED_POINT_IN_TIME"
+            else:
+                availability = "RECONSTRUCTABLE_EVENT_TIME"
+            features[name] = {
+                "availability_semantics": availability,
+                "coverage_fraction": len(observed) / max(1, frame.height),
+                "missing_fraction": series.null_count() / max(1, frame.height),
+                "unique_values": observed.n_unique(),
+                "dominant_fraction": max(counts, default=0) / max(1, len(observed)),
+                "standard_deviation": (
+                    float(standard_deviation) if isinstance(standard_deviation, (int, float)) else 0.0
+                ),
+            }
+        return {
+            "dataset_hash": dataset_hash,
+            "schema_hash": schema_hash,
+            "rows": frame.height,
+            "candidate_features": len(features),
+            "all_null_features": sorted(
+                name for name, values in features.items() if float(values["coverage_fraction"]) == 0
+            ),
+            "constant_features": sorted(
+                name
+                for name, values in features.items()
+                if float(values["coverage_fraction"]) > 0 and int(values["unique_values"]) <= 1
+            ),
+            "features": features,
+        }

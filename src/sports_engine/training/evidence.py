@@ -69,9 +69,13 @@ def assess_model_evidence(
     class_counts = {str(label): targets.count(label) for label in sorted(set(targets))}
     team_count = len(set(frame["home_team_id"].to_list()) | set(frame["away_team_id"].to_list()))
     features = feature_columns or []
-    informative_features = [name for name in features if frame[name].drop_nulls().n_unique() > 1]
+    normalized_features = {
+        name: frame[name].fill_nan(None) if frame.schema[name].is_float() else frame[name]
+        for name in features
+    }
+    informative_features = [name for name, series in normalized_features.items() if series.drop_nulls().n_unique() > 1]
     missing = (
-        sum(frame[name].null_count() for name in features) / (frame.height * len(features))
+        sum(series.null_count() for series in normalized_features.values()) / (frame.height * len(features))
         if features and frame.height
         else 0.0
     )

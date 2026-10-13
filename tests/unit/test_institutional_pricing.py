@@ -178,3 +178,7 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
     assert "not guaranteed executable prices" in document
     assert "report-data" in document
     assert "audit-league" in document
+    assert "market-search" in document
+    assert "filterMarket" in document
+    assert "prefers-reduced-motion" in document
+    assert "Football intelligence" in document

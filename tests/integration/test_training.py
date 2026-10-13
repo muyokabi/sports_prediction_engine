@@ -94,6 +94,8 @@ def test_training_registers_immutable_candidate_with_manifest(tmp_path: Path, mo
     assert manifest["artifact_sha256"] == sha256(result.artifact_path.read_bytes()).hexdigest()
     assert manifest["feature_quality_audit"]["rows"] == 30
     assert manifest["feature_quality_audit"]["active_features"] == len(manifest["feature_columns"])
+    assert manifest["feature_quality_audit"]["candidate_features"] > len(manifest["feature_columns"])
+    assert manifest["feature_quality_audit"]["features"]["bookmaker_home_fair"]["selection_status"] == "CONSTANT"
     assert json.loads(row[3])["bookmaker_baseline"]["rows"] == 6
     if model_type in {"elo", "poisson", "dixon-coles"}:
         deployment = json.loads(row[3])["deployment_refit"]

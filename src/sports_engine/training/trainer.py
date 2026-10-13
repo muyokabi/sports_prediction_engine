@@ -619,7 +619,7 @@ class ModelTrainer:
         for name, dtype in frame.schema.items():
             if name in NON_FEATURE_COLUMNS or not (dtype.is_numeric() or dtype == pl.Boolean):
                 continue
-            series = frame[name]
+            series = frame[name].fill_nan(None) if dtype.is_float() else frame[name]
             if series.null_count() / max(1, frame.height) > maximum_missing_fraction:
                 continue
             observed = series.drop_nulls()
@@ -636,28 +636,47 @@ class ModelTrainer:
 
     @staticmethod
     def _feature_quality_audit(frame: pl.DataFrame, feature_columns: list[str]) -> dict[str, Any]:
-        features: dict[str, dict[str, float | int]] = {}
-        for name in feature_columns:
-            series = frame[name]
+        selected = set(feature_columns)
+        features: dict[str, dict[str, float | int | bool | str]] = {}
+        for name, dtype in frame.schema.items():
+            if name in NON_FEATURE_COLUMNS or not (dtype.is_numeric() or dtype in {pl.Boolean, pl.Null}):
+                continue
+            series = frame[name].fill_nan(None) if dtype.is_float() else frame[name]
             observed = series.drop_nulls()
-            counts = observed.value_counts().get_column("count").to_numpy()
-            standard_deviation = observed.cast(pl.Float64).std()
+            counts = observed.value_counts().get_column("count").to_numpy() if len(observed) else np.array([])
+            standard_deviation = observed.cast(pl.Float64).std() if len(observed) else None
+            unique_values = observed.n_unique()
+            dominant_fraction = float(np.max(counts)) / len(observed) if len(observed) else 0.0
+            if name in selected:
+                exclusion_reason = "INCLUDED"
+            elif not len(observed):
+                exclusion_reason = "ALL_NULL"
+            elif unique_values <= 1:
+                exclusion_reason = "CONSTANT"
+            elif dominant_fraction >= 0.995:
+                exclusion_reason = "NEAR_CONSTANT"
+            else:
+                exclusion_reason = "POLICY_EXCLUDED"
             features[name] = {
                 "missing_fraction": series.null_count() / max(1, frame.height),
-                "unique_values": observed.n_unique(),
-                "dominant_fraction": float(np.max(counts)) / max(1, len(observed)),
+                "unique_values": unique_values,
+                "dominant_fraction": dominant_fraction,
                 "standard_deviation": (
                     float(standard_deviation) if isinstance(standard_deviation, (int, float)) else 0.0
                 ),
+                "selected": name in selected,
+                "selection_status": exclusion_reason,
             }
         return {
             "rows": frame.height,
             "active_features": len(feature_columns),
+            "candidate_features": len(features),
+            "excluded_features": len(features) - len(feature_columns),
             "features_at_least_50_percent_missing": sum(
-                values["missing_fraction"] >= 0.5 for values in features.values()
+                float(values["missing_fraction"]) >= 0.5 for values in features.values()
             ),
             "features_at_least_90_percent_missing": sum(
-                values["missing_fraction"] >= 0.9 for values in features.values()
+                float(values["missing_fraction"]) >= 0.9 for values in features.values()
             ),
             "features": features,
         }

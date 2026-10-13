@@ -1,6 +1,10 @@
 # Production Runbook
 
-The platform is currently `PRODUCTION_PROVIDER_QUALIFIED_DATA_ACCUMULATING`. API-Football current-season access, dynamic quota discovery, 20-ID enrichment, player-stat semantics and current odds were deliberately qualified before production bootstrap. The historical 2024 replay ledger remains separate and must never be labeled as current-season production data.
+The platform is currently `RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`. API-Football current-season access, dynamic quota discovery, 20-ID enrichment, player-stat semantics and current odds are provider-qualified. The historical replay ledger remains separate and must never be labeled as current-season production data.
+
+The engine must continue to produce probabilities and fair prices when a qualified score model exists. A missing market-family champion removes the real-money label; it does not disable research prediction. Never weaken promotion gates to manufacture output.
+
+API-Football is the sole integrated reference provider. Its odds history is short-lived, lineups are often published shortly before kickoff and are not universal, and coverage flags are planning hints rather than per-fixture guarantees. Preserve unavailable odds, injury and lineup fields as `UNKNOWN`. Do not synthesize them or assume a paid plan makes historical point-in-time observations recoverable. Consult `AGENTS.md` and `docs/research/INSTITUTIONAL_IMPROVEMENT_RESEARCH.md` before changing data requirements.
 
 ## Install and configure
 
@@ -73,9 +77,11 @@ Generated artifacts are partitioned by creation date. Daily HTML is under
 `artifacts/models/YYYY/MM/DD/<version>/`; walk-forward evidence is under
 `artifacts/evaluation/YYYY/MM/DD/`. The model registry stores the exact path, and evaluation
 discovery is recursive, so historical flat-layout artifacts remain valid and must not be moved by
-hand. New model and calibrator manifests include SHA-256 digests that are verified before loading;
-pickle files still require trusted local provenance and must never be accepted from an untrusted
-source.
+hand. New model and calibrator manifests include SHA-256 digests that are verified before loading.
+Automated production promotion requires both hashes and fails closed with
+`ARTIFACT_INTEGRITY_NOT_VERIFIED`; legacy hashless artifacts remain research-only compatibility.
+Digest verification detects replacement but does not make pickle safe for untrusted provenance,
+so pickle files must never be accepted from an untrusted source.
 
 `SHADOW_ACTIONABLE` means eligible for prospective paper tracking only. The default bootstrap policy accepts fresh
 `MATCH_ODDS`, `BTTS`, and `TOTAL_GOALS` references from structurally fitted, actionable competitions, then caps output at
@@ -112,6 +118,7 @@ The paid subscription passed qualification on 2026-10-07. For a future plan, cre
 2. Replace only `API_FOOTBALL_KEY` in `.env`; no source change is required.
 3. Run `doctor --connectivity` and confirm the dynamically reported plan/quota state.
 4. Run `doctor --connectivity --verify-current-season` once when qualification is warranted.
+   Confirm that its detail names an exact probe pair (for example, `production league=39 season=2026`) and that the season belongs to that league. A catalog-wide maximum season can belong to a future tournament and must never be reused for another league.
 5. Keep production collection stopped if access fails; otherwise run coverage audit, bootstrap, quality and integrity checks.
 6. Run `football season-rollover` when a newly current season appears. Prior seasons remain intact.
 

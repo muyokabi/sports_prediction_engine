@@ -30,7 +30,7 @@ models:
     enabled: true
     policy_version: match-odds-api-football-v2
     market_family: MATCH_ODDS
-    market_baseline_mode: when_available
+    market_baseline_mode: required
     eligible_model_types: [poisson, dixon-coles]
     minimum_evaluation_rows: 200
     minimum_baseline_rows: 200

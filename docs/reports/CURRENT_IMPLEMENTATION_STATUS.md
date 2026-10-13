@@ -1,24 +1,30 @@
 # Current Implementation Status
 
-Verified 2026-10-11 (Africa/Nairobi).
+Verified 2026-10-13 (Africa/Nairobi).
 
 ## Status
 
-`RESEARCH_ONLY / FAIL_CLOSED`
+`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`
 
-The system now discovers the provider catalog automatically in its principal and historical workflows. The current catalog contains 1,241 competitions: 10 actionable, 65 observation candidates, 1,062 discovered, and 104 rejected. Historical backfill selects up to 40 governed leagues by default; it does not auto-promote observation leagues.
+The engine produces probabilities and fair prices. The final live acceptance analyzed 19/19 fixtures, associated API-Football references to all 19, and persisted 837 prices across match odds, BTTS, and total goals. There were 324 research value signals and 513 research-only prices; none was labeled production-actionable.
 
-The warehouse contains 19,774 fixtures, 17,179 completed fixtures, and 8,271 ML-eligible detailed matches. The latest live run covered all six requested fixtures, stored API-Football references for all six, generated six new fixture predictions, priced 275 selections, and produced three shadow-only watch rows. Across retained runs the warehouse contains 12 institutional predictions and 317 opportunity rows.
+There is no active market-family champion. The prior Dixon-Coles champion was demoted because the configured significant market-outperformance requirement had zero point-in-time baseline rows. It remains available as a qualified research score model, so absence of a real-money role does not suppress fixture predictions.
 
-There is no production champion. The prior incumbent was demoted after its explicit probability-forensics failure was correctly enforced. Fresh candidates remain challengers. Therefore every current price is research or shadow evidence, not a real-money recommendation.
+The warehouse contains 1,241 competitions, 876 teams, 58,670 fixtures, 55,732 completed fixtures, 18,767 eligible quality assessments, 76 prospective odds snapshots over 38 fixtures, 161 institutional predictions, and 34 unsettled shadow observations.
 
-## Normal commands
+## Normal command
 
-For a fresh clone, follow the ordered sequence in `README.md`: migrate and verify, run the discovery-backed five-season backfill, train historically, then use `sports-engine run --date tomorrow`. For ongoing operation, the principal `run` command handles discovery, current data, odds, due learning, governance, pricing, and reporting.
+Use `sports-engine run --date today` or `sports-engine run --date tomorrow`. The principal workflow handles preflight, catch-up, discovery, current data, scoped odds, due learning, governance, prediction, reporting, and integrity.
 
-## Evidence
+Unavailable historical odds, injuries, and lineups remain explicit unknowns. Do not weaken gates to create betting recommendations. Continue prospective collection until market-baseline and settled-shadow evidence reach the configured requirements.
 
-- Final audit: `docs/reports/AUTONOMOUS_INSTITUTIONAL_CODEBASE_UPGRADE_REPORT.md`
+Production promotion now also requires digest-backed integrity evidence for the model artifact and any calibrator. Legacy hashless pickle artifacts remain available only as trusted-local research history. The 2026-10-13 reassessment withheld all 49 candidates; no market-family champion was created.
+
+## Durable evidence
+
+- Future-agent guardrails: `AGENTS.md`
 - Pre-upgrade snapshot: `docs/audits/CURRENT_SYSTEM_BASELINE.md`
 - Open/closed findings: `docs/audits/IMPROVEMENT_REGISTER.md`
+- Research record: `docs/research/INSTITUTIONAL_IMPROVEMENT_RESEARCH.md`
+- Final audit: `docs/reports/AUTONOMOUS_INSTITUTIONAL_CODEBASE_UPGRADE_REPORT.md`
 - Satisfaction boundary: `docs/reports/CODEBASE_SATISFACTION_STATEMENT.md`
