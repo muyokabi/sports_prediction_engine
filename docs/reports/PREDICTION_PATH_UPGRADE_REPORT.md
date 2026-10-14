@@ -49,3 +49,13 @@ Focused adversarial coverage verifies invalid/non-finite/out-of-range binary pro
 - **Still unproven:** score-distribution-preserving calibration benefit, competition transfer, market outperformance, prospective edge, and bankroll safety.
 - **Next experiment:** predeclare and test one distribution-preserving score calibration challenger on validation eras, then keep a later temporal era untouched.
 - **Current classification:** `RESEARCH_AND_SHADOW`.
+
+## Follow-up cycle — global intensity calibration
+
+PXR-002 implemented reproducible latent score-parameter lineage and tested one score-distribution-preserving calibration hypothesis. The challenger multiplied both Dixon-Coles intensities by a shared scalar, retained rho, and rebuilt every market from the same normalized score matrix.
+
+The scalar fitted on chronological folds 1-2 was 0.979780. It failed fold-3 validation: realized-score log loss worsened by +0.003593 with 95% block-bootstrap interval [0.002368, 0.004965], BTTS by +0.001917 [0.001161, 0.002677], and totals by +0.003052 [0.001875, 0.004218]. The failure persisted on the 1,938 both-teams-seen fixtures. Fold 4 remained uninspected under the predeclared gate.
+
+This is a useful negative result: no production or candidate logic was changed, no unsupported calibration was promoted, and future evaluation can now reconstruct coherent fold score distributions from expected goals and rho. Prediction quality and candidate quality did not improve. Dixon-Coles remains `RESEARCH_ONLY`; system classification remains `RESEARCH_AND_SHADOW`.
+
+Verification: 242 tests, repository-wide Ruff, mypy across 164 source files, warehouse integrity, artifact digest checks, and read-only reconciliation of the latest persisted 12-fixture report all passed.

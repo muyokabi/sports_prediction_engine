@@ -67,6 +67,14 @@ The hypothesis that global score-family evidence was sufficient for blanket vali
 
 Post-change verification: 239 tests passed, Ruff passed, mypy passed for 163 source files, and warehouse integrity passed. The final offline acceptance report was re-reconciled to the ledger: 12 expected / 12 terminal fixtures, ten predictions, 467 opportunities, 135 research-value signals, and zero shadow/production labels.
 
+## Score-calibration experiment — 2026-10-14
+
+PXR-002 tested one coherent global goal-intensity scale without changing production predictions. The exact four-fold Dixon-Coles baseline was reproduced on 9,460 out-of-fold fixtures (log loss 1.027692, Brier 0.616561, RPS 0.213132, ECE 0.014923). Evaluation artifacts now retain fold-local expected goals, rho, and home/away training representation so coherent calibration can be reproduced rather than inferred.
+
+The scale fitted on folds 1-2 was 0.979780 and failed the 2,217-row fold-3 validation gate. It significantly worsened scoreline, BTTS and total-goals proper losses; the last fold remained uninspected. No model role, family validation, historical prediction, production opportunity, or shortlist rule changed. Prediction and candidate probabilities therefore did not improve; evidence quality improved by closing an unjustified calibration path. Classification remains `RESEARCH_AND_SHADOW`.
+
+Post-change verification: 242 tests passed, Ruff passed, mypy passed for 164 source files, warehouse integrity passed, and the current persisted report was re-reconciled to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
 ## Durable evidence
 
 - Documentation map: `docs/README.md`

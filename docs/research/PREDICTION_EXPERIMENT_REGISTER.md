@@ -79,3 +79,66 @@ Artifacts:
 ### Unresolved limitations and next experiment
 
 Historical point-in-time API-Football market probabilities remain unavailable, so no market-baseline or execution claim is possible. Competition samples are uneven; applicability tiers are not yet stratified inside the family report; and this experiment evaluates only BTTS yes/no and the 2.5 total line. The next highest-value experiment is a predeclared score-distribution-preserving calibration challenger (for example, validation-era scaling of goal intensities or a constrained mixture with league priors), selected before a new untouched temporal era and evaluated only in competitions with adequate samples. Continued prospective reference capture remains mandatory.
+
+## PXR-002 — Global score-intensity calibration
+
+**Opened / completed:** 2026-10-14 (Africa/Nairobi)
+
+**Decision:** `REJECTED_ON_VALIDATION / RETAIN RESEARCH_ONLY`
+
+**Production ledger mutation:** none. The source warehouse was opened read-only and probability-scope persistence was disabled. Only new immutable evaluation artifacts were written.
+
+### Hypothesis and frozen contract
+
+A single positive multiplier on both Dixon-Coles goal intensities may repair score-distribution calibration while preserving one coherent matrix for MATCH_ODDS, BTTS and TOTAL_GOALS_2_5. Folds 1-2 fit the scalar inside the predeclared range [0.5, 1.5]. Fold 3 is the validation gate. Fold 4 may be inspected only if validation scoreline log loss improves and no family log loss degrades by more than 0.001. The primary loss is negative log probability of the realized score; family proper losses and ECE are diagnostics. The fitted fold rho is retained.
+
+### Dataset and baseline lineage
+
+| Item | Evidence |
+|---|---|
+| Dataset / hash | `automatic-models-20261013T220836790988Z` / `9c5d616d445e807c6c6ff087f0f498429cfb5fd34274c8aec6bac68c84cdb879` |
+| Sidecar | `data/parquet/features/automatic-models-20261013T220836790988Z-9c5d616d445e.parquet.feature-quality.json` |
+| Model | `dixon-coles-20261013T223455579046Z-92b51b5e` |
+| Four-fold baseline | 9,460 rows; log loss 1.027692; Brier 0.616561; RPS 0.213132; ECE 0.014923 |
+| Development folds | 1-2 |
+| Validation fold | 3: 2026-04-16 through 2026-08-13, 2,217 rows |
+| Untouched experiment fold | 4; not inspected because validation failed |
+| Market baseline | unavailable historically; no market or execution claim |
+
+The regenerated artifact reproduced every stored baseline MATCH_ODDS, BTTS and totals probability from latent expected goals and rho with maximum absolute error 0.0.
+
+### Validation results
+
+The development scale was `0.9797795579802315`.
+
+| Target | Baseline | Challenger | Paired challenger-minus-baseline loss (95% chronological block CI) |
+|---|---:|---:|---:|
+| Realized score log loss | 3.007913 | 3.011506 | +0.003593 [0.002368, 0.004965] |
+| MATCH_ODDS log loss | 1.060802 | 1.060883 | +0.000081 [-0.000230, 0.000449] |
+| BTTS log loss | 0.690809 | 0.692726 | +0.001917 [0.001161, 0.002677] |
+| BTTS Brier | 0.248582 | 0.249521 | +0.000939 [0.000576, 0.001318] |
+| TOTAL_GOALS_2_5 log loss | 0.695792 | 0.698844 | +0.003052 [0.001875, 0.004218] |
+| TOTAL_GOALS_2_5 Brier | 0.250623 | 0.252068 | +0.001445 [0.000895, 0.002001] |
+
+BTTS ECE worsened from 0.050671 to 0.059131 and totals ECE from 0.062508 to 0.073888. MATCH_ODDS ECE improved slightly from 0.033246 to 0.030069, but its proper loss did not improve and the shared distribution worsened materially elsewhere.
+
+### Applicability and failure clusters
+
+Fold-local representation was 1,938 both-teams-seen fixtures, 33 one-team-unseen, and 246 both-teams-unseen; 798 fixtures had either team below five training matches. Scoreline loss worsened for both-teams-seen rows by +0.003395 [0.001901, 0.004776], for both-unseen rows by +0.006091 [0.001866, 0.010908], and for the low-history group by +0.004101 [0.001962, 0.006932]. The small one-team-unseen subgroup was unresolved. A global scale therefore did not become useful after isolating fitted-team fixtures and supplies no new applicability discrimination.
+
+### Decision and artifacts
+
+The challenger failed the frozen validation gate and was rejected without opening fold 4. No calibrator, model artifact, role, family qualification, threshold, historical prediction, opportunity, or candidate-ranking rule was changed. Candidate quality and quantity are unchanged.
+
+Verification after the evaluation-lineage change: 242 tests passed, Ruff passed, mypy passed for 164 source files, `git diff --check` passed, and production warehouse integrity passed. Analysis `ec603dc8-13c4-4431-aec7-eb3a4e51b017` was re-reconciled read-only to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
+Artifacts:
+
+- `artifacts/evaluation/2026/10/14/dixon-coles-9c5d616d445e-7a42be875b91.json`
+- `artifacts/evaluation/2026/10/14/dixon-coles-9c5d616d445e-7a42be875b91.predictions.parquet`
+- `artifacts/evaluation/2026/10/14/score-intensity-calibration-9c5d616d445e-edb829e594c1.json`
+- `artifacts/evaluation/2026/10/14/score-intensity-calibration-9c5d616d445e-edb829e594c1.predictions.parquet`
+
+### Unresolved limitations and next experiment
+
+The result rejects only one global total-intensity degree of freedom; it does not reject partially pooled competition effects, dynamic home advantage, or a constrained competition-prior mixture. Historical point-in-time market evidence remains unavailable, and the experiment did not create new candidate evidence. The next highest-value quantitative experiment is a predeclared partially pooled competition scoring-effect challenger with sparse-competition shrinkage, evaluated on sufficiently represented competitions and a genuinely later untouched era. Prospective API-Football reference accumulation remains mandatory.

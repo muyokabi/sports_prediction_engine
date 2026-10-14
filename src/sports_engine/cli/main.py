@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import typer
 
 from sports_engine.cli.api import app as api_app
@@ -283,6 +285,27 @@ def evaluate(
         raise typer.Exit(2) from exc
     finally:
         connection.close()
+
+
+@app.command("evaluate-score-calibration")
+def evaluate_score_calibration(
+    report: Path,
+) -> None:
+    """Evaluate a coherent Dixon-Coles intensity-scale challenger."""
+    from sports_engine.core.config import load_config
+    from sports_engine.evaluation.score_calibration import evaluate_score_intensity_calibration
+
+    config = load_config()
+    try:
+        path = evaluate_score_intensity_calibration(
+            report,
+            config.artifacts_dir / "evaluation",
+            random_seed=config.models.random_seed,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"score-calibration={path}")
 
 
 @app.command("backtest")

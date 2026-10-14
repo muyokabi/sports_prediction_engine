@@ -58,6 +58,8 @@ class EvaluationCandidate:
 class FoldPrediction:
     match_odds: np.ndarray
     score_markets: dict[str, np.ndarray]
+    score_parameters: dict[str, np.ndarray]
+    representation: dict[str, np.ndarray]
 
 
 class WalkForwardEvaluator:
@@ -72,6 +74,7 @@ class WalkForwardEvaluator:
         minimum_competition_rows: int = 100,
         maximum_competition_ece: float = 0.08,
         probability_scope_policy_version: str = "competition-calibration-v1",
+        persist_probability_scope_validations: bool = True,
     ) -> None:
         self.connection = connection
         self.output_dir = output_dir
@@ -81,6 +84,7 @@ class WalkForwardEvaluator:
         self.minimum_competition_rows = minimum_competition_rows
         self.maximum_competition_ece = maximum_competition_ece
         self.probability_scope_policy_version = probability_scope_policy_version
+        self.persist_probability_scope_validations = persist_probability_scope_validations
 
     def evaluate(
         self,
@@ -110,6 +114,15 @@ class WalkForwardEvaluator:
         all_test_indexes: list[np.ndarray] = []
         all_fold_indexes: list[np.ndarray] = []
         all_score_markets: dict[str, list[np.ndarray]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
+        all_score_parameters: dict[str, list[np.ndarray]] = {
+            "home_expected_goals": [],
+            "away_expected_goals": [],
+            "dixon_coles_rho": [],
+        }
+        all_representation: dict[str, list[np.ndarray]] = {
+            "home_training_matches": [],
+            "away_training_matches": [],
+        }
         all_score_baselines: dict[str, list[np.ndarray]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
         family_fold_metrics: dict[str, list[dict[str, Any]]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
         fold_metrics: list[dict[str, Any]] = []
@@ -133,6 +146,10 @@ class WalkForwardEvaluator:
                     family_fold_metrics[family].append(
                         binary_probability_metrics(family_targets[family], family_probabilities)
                     )
+                for name, values in prediction.score_parameters.items():
+                    all_score_parameters[name].append(values)
+                for name, values in prediction.representation.items():
+                    all_representation[name].append(values)
         combined_targets = np.concatenate(all_targets)
         combined_probabilities = np.vstack(all_probabilities)
         aggregate: dict[str, Any] = probability_metrics(combined_targets, combined_probabilities)
@@ -243,6 +260,26 @@ class WalkForwardEvaluator:
                     "over_2_5_empirical_baseline",
                     np.concatenate(all_score_baselines["TOTAL_GOALS_2_5"]),
                 ),
+                pl.Series(
+                    "home_expected_goals",
+                    np.concatenate(all_score_parameters["home_expected_goals"]),
+                ),
+                pl.Series(
+                    "away_expected_goals",
+                    np.concatenate(all_score_parameters["away_expected_goals"]),
+                ),
+                pl.Series(
+                    "dixon_coles_rho",
+                    np.concatenate(all_score_parameters["dixon_coles_rho"]),
+                ),
+                pl.Series(
+                    "home_training_matches",
+                    np.concatenate(all_representation["home_training_matches"]),
+                ),
+                pl.Series(
+                    "away_training_matches",
+                    np.concatenate(all_representation["away_training_matches"]),
+                ),
             )
         prediction_buffer = io.BytesIO()
         prediction_frame.write_parquet(prediction_buffer, compression="zstd")
@@ -260,13 +297,14 @@ class WalkForwardEvaluator:
         if not path.exists():
             prediction_path.write_bytes(prediction_payload)
             path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-        self._persist_probability_scope_validations(
-            model_type,
-            candidate.version,
-            aggregate,
-            path,
-            created_at,
-        )
+        if self.persist_probability_scope_validations:
+            self._persist_probability_scope_validations(
+                model_type,
+                candidate.version,
+                aggregate,
+                path,
+                created_at,
+            )
         return EvaluationReport(
             model_type,
             dataset.dataset_id,
@@ -537,7 +575,13 @@ class WalkForwardEvaluator:
             fit = np.asarray([index for index in train if timestamps[int(index)] not in calibration_times])
             calibration = np.asarray([index for index in train if timestamps[int(index)] in calibration_times])
 
-        probabilities, calibration_probabilities, score_markets = self._fit_predict_raw(
+        (
+            probabilities,
+            calibration_probabilities,
+            score_markets,
+            score_parameters,
+            representation,
+        ) = self._fit_predict_raw(
             model_type,
             frame,
             fit,
@@ -552,7 +596,7 @@ class WalkForwardEvaluator:
                 random_seed=self.random_seed,
             ).fit(calibration_probabilities, targets[calibration])
             probabilities = calibrator.transform(probabilities)
-        return FoldPrediction(probabilities, score_markets)
+        return FoldPrediction(probabilities, score_markets, score_parameters, representation)
 
     def _fit_predict_raw(
         self,
@@ -562,7 +606,13 @@ class WalkForwardEvaluator:
         test: np.ndarray,
         calibration: np.ndarray,
         candidate: EvaluationCandidate,
-    ) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    ) -> tuple[
+        np.ndarray,
+        np.ndarray,
+        dict[str, np.ndarray],
+        dict[str, np.ndarray],
+        dict[str, np.ndarray],
+    ]:
         hyperparameters = candidate.hyperparameters
         if model_type in {"elo", "poisson", "dixon-coles"}:
             matches = list(
@@ -605,15 +655,37 @@ class WalkForwardEvaluator:
                 [(matches[index][0], matches[index][1]) for index in calibration]
             )
             score_markets: dict[str, np.ndarray] = {}
+            score_parameters: dict[str, np.ndarray] = {}
+            representation: dict[str, np.ndarray] = {}
             if model_type in {"poisson", "dixon-coles"}:
-                market_rows = [
-                    model.market_probabilities(matches[index][0], matches[index][1]) for index in test
-                ]
+                fixtures = [(matches[index][0], matches[index][1]) for index in test]
+                market_rows = [model.market_probabilities(home, away) for home, away in fixtures]
+                rates = [model.expected_goals(home, away) for home, away in fixtures]
+                counts: dict[str, int] = {}
+                for index in train:
+                    home, away = matches[index][:2]
+                    counts[home] = counts.get(home, 0) + 1
+                    counts[away] = counts.get(away, 0) + 1
                 score_markets = {
                     "BTTS": np.asarray([row["btts_yes"] for row in market_rows], dtype=float),
                     "TOTAL_GOALS_2_5": np.asarray([row["over_2_5"] for row in market_rows], dtype=float),
                 }
-            return predictions, calibration_predictions, score_markets
+                score_parameters = {
+                    "home_expected_goals": np.asarray([row[0] for row in rates], dtype=float),
+                    "away_expected_goals": np.asarray([row[1] for row in rates], dtype=float),
+                    "dixon_coles_rho": np.full(
+                        len(test), float(model.rho) if model_type == "dixon-coles" else 0.0
+                    ),
+                }
+                representation = {
+                    "home_training_matches": np.asarray(
+                        [counts.get(home, 0) for home, _ in fixtures], dtype=int
+                    ),
+                    "away_training_matches": np.asarray(
+                        [counts.get(away, 0) for _, away in fixtures], dtype=int
+                    ),
+                }
+            return predictions, calibration_predictions, score_markets, score_parameters, representation
         columns = list(candidate.feature_columns)
         missing = sorted(set(columns) - set(frame.columns))
         if missing:
@@ -641,6 +713,8 @@ class WalkForwardEvaluator:
         return (
             self._ordered_probabilities(model, matrix[test]),
             self._ordered_probabilities(model, matrix[calibration]),
+            {},
+            {},
             {},
         )
 
