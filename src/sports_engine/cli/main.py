@@ -308,6 +308,34 @@ def evaluate_score_calibration(
     typer.echo(f"score-calibration={path}")
 
 
+@app.command("evaluate-competition-calibration")
+def evaluate_competition_calibration(
+    report: Path,
+) -> None:
+    """Evaluate a coherent partially pooled competition-intensity challenger."""
+    from sports_engine.core.config import load_config
+    from sports_engine.evaluation.competition_calibration import (
+        evaluate_competition_intensity_calibration,
+    )
+    from sports_engine.warehouse.connection import connect
+
+    config = load_config()
+    connection = connect(config.database_path, read_only=True)
+    try:
+        path = evaluate_competition_intensity_calibration(
+            connection,
+            report,
+            config.artifacts_dir / "evaluation",
+            random_seed=config.models.random_seed,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        connection.close()
+    typer.echo(f"competition-calibration={path}")
+
+
 @app.command("backtest")
 def backtest(all_models: bool = typer.Option(False, "--all")) -> None:
     from sports_engine.cli.runtime import open_database

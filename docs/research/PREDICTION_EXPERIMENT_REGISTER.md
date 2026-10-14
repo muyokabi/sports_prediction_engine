@@ -142,3 +142,61 @@ Artifacts:
 ### Unresolved limitations and next experiment
 
 The result rejects only one global total-intensity degree of freedom; it does not reject partially pooled competition effects, dynamic home advantage, or a constrained competition-prior mixture. Historical point-in-time market evidence remains unavailable, and the experiment did not create new candidate evidence. The next highest-value quantitative experiment is a predeclared partially pooled competition scoring-effect challenger with sparse-competition shrinkage, evaluated on sufficiently represented competitions and a genuinely later untouched era. Prospective API-Football reference accumulation remains mandatory.
+
+## PXR-003 — Partially pooled competition scoring-intensity calibration
+
+**Opened:** 2026-10-14 (Africa/Nairobi)
+
+**Status at predeclaration:** `OPEN / FINAL FOLD SEALED`
+
+**Production ledger mutation:** prohibited. The experiment may write only new immutable evaluation artifacts.
+
+### Hypothesis and frozen contract
+
+The failure of one global intensity scale, together with the competition-level BTTS and totals instability in PXR-001, suggests that scoring-rate bias may be competition-specific. A competition-specific multiplier on both Dixon-Coles intensities may improve the coherent score distribution when estimates are shrunk toward no adjustment and sparse or unseen competitions fall back explicitly to scale 1.0.
+
+The source is the exact PXR-002 Dixon-Coles prediction artifact and its verified fixture-to-competition mapping from the read-only production warehouse. Fold 1 fits competition rates. Fold 2 selects one prior exposure from the frozen grid `[25, 100, 400]` expected-goal units using realized-score log loss only. Folds 1-2 are then combined to fit the selected specification; fold 3 is the validation gate. Fold 4 is read and scored only if all validation rules pass.
+
+For competition `c`, the scale is `(observed_goals_c + prior_exposure) / (expected_goals_c + prior_exposure)`. Competitions with fewer than 30 development fixtures, missing mappings, or no development representation receive scale 1.0; they are never assigned another competition's estimate. The same multiplier is applied to home and away intensities, fold rho is retained, and every market probability is rebuilt from one normalized score matrix.
+
+Validation passes only when the candidate-minus-baseline realized-score log-loss block-bootstrap 95% upper bound is below zero, no MATCH_ODDS/BTTS/TOTAL_GOALS_2_5 mean log loss degrades by more than 0.001, every output is finite and coherent, and at least one competition is eligible for an estimated scale. The primary decision is scoreline log loss; family losses, calibration, competition stability, representation state, and scale sensitivity are diagnostics. No market-family role, calibration record, threshold, shortlist gate, prediction, price, or opportunity may change from this experiment alone.
+
+### Frozen lineage
+
+| Item | Evidence |
+|---|---|
+| Dataset / hash | `automatic-models-20261013T220836790988Z` / `9c5d616d445e807c6c6ff087f0f498429cfb5fd34274c8aec6bac68c84cdb879` |
+| Score model | `dixon-coles-20261013T223455579046Z-92b51b5e` |
+| Source evaluation | `artifacts/evaluation/2026/10/14/dixon-coles-9c5d616d445e-7a42be875b91.json` |
+| Development / selection / validation / test | fold 1 / fold 2 / fold 3 / fold 4 |
+| Minimum competition development rows | 30 |
+| Prior-exposure grid | 25, 100, 400 expected-goal units |
+| Historical market baseline | unavailable; no market-outperformance or execution claim |
+
+The completion result, including the selected exposure, validation metrics, paired interval, sensitivity, applicability evidence, decision, and artifact paths, will be appended without rewriting this predeclaration.
+
+### Completion result — 2026-10-14
+
+**Decision:** `REJECTED_ON_VALIDATION / RETAIN RESEARCH_ONLY`
+
+Fold-2 selection chose prior exposure 400. The selection scoreline losses for exposures 25, 100, and 400 were 2.889218, 2.888674, and 2.887619 respectively. Refitting the selected specification on folds 1-2 estimated scales for 20 of 24 represented competitions; scales ranged from 0.868820 to 1.067939. On validation, 1,603/2,217 fixtures used an estimated competition scale and 614 correctly retained the explicit scale-1.0 sparse/unseen fallback.
+
+| Validation target | Baseline | Challenger | Paired challenger-minus-baseline loss (95% chronological block CI) |
+|---|---:|---:|---:|
+| Realized score log loss | 3.007913 | 3.009708 | +0.001795 [-0.000809, +0.004035] |
+| MATCH_ODDS log loss | 1.060802 | 1.062051 | +0.001249 [+0.000513, +0.002031] |
+| BTTS log loss | 0.690809 | 0.691086 | +0.000277 [-0.001347, +0.001986] |
+| TOTAL_GOALS_2_5 log loss | 0.695792 | 0.698793 | +0.003002 [+0.000894, +0.004778] |
+
+MATCH_ODDS ECE moved from 0.033246 to 0.030019, but that diagnostic improvement came with a statistically resolved proper-loss degradation. BTTS ECE worsened from 0.050671 to 0.058481 and totals ECE from 0.062508 to 0.072243. Competition effects were not stable: Major League Soccer improved by -0.012517 mean scoreline loss while Liga Pro worsened by +0.021112 and Liga Profesional Argentina by +0.011658. This is the failure pattern partial pooling was intended to control, not evidence for selectively promoting the favourable leagues after observing validation.
+
+The primary interval crossed zero and both MATCH_ODDS and totals exceeded the frozen +0.001 degradation tolerance. The validation gate therefore failed, fold 4 remained unscored, and no model artifact, calibrator, role, probability-scope row, prediction, price, opportunity, threshold, or candidate-ranking rule changed.
+
+Artifacts:
+
+- `artifacts/evaluation/2026/10/14/competition-intensity-calibration-9c5d616d445e-98489523703b.json`
+- `artifacts/evaluation/2026/10/14/competition-intensity-calibration-9c5d616d445e-98489523703b.predictions.parquet`
+
+The artifact binds the source evaluation and prediction digests, a SHA-256 of the exact fixture-to-competition mapping, the frozen contract, shrinkage sensitivity, competition estimates, validation rows, paired intervals, and the output Parquet digest. This negative result rejects a single total-intensity multiplier by competition; it does not reject dynamic home advantage, competition-specific low-score dependence, overdispersion, or a fully refitted hierarchical score model. A new challenger should wait for a genuinely later untouched era and should target a mechanism this experiment did not already falsify.
+
+Verification: 246 tests passed, repository-wide Ruff passed, mypy passed for 165 source files, `git diff --check` passed, warehouse integrity passed, and the generated 2,217-row Parquet digest matched its report. Persisted analysis `ec603dc8-13c4-4431-aec7-eb3a4e51b017` remained `COMPLETE` and reconciled read-only to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels; its HTML exposes the same operational counts.

@@ -59,3 +59,13 @@ The scalar fitted on chronological folds 1-2 was 0.979780. It failed fold-3 vali
 This is a useful negative result: no production or candidate logic was changed, no unsupported calibration was promoted, and future evaluation can now reconstruct coherent fold score distributions from expected goals and rho. Prediction quality and candidate quality did not improve. Dixon-Coles remains `RESEARCH_ONLY`; system classification remains `RESEARCH_AND_SHADOW`.
 
 Verification: 242 tests, repository-wide Ruff, mypy across 164 source files, warehouse integrity, artifact digest checks, and read-only reconciliation of the latest persisted 12-fixture report all passed.
+
+## Follow-up cycle — partially pooled competition intensity
+
+PXR-003 tested whether competition scoring regimes could repair the global-scale failure without breaking score-distribution coherence. Fold 1 fitted competition scales, fold 2 selected a shrinkage exposure from the frozen grid, fold 3 served as the validation gate, and fold 4 was sealed unless validation passed. Sparse or unseen competitions retained scale 1.0.
+
+The selected 400-goal exposure produced 20 estimated competition scales and adjusted 1,603/2,217 validation fixtures. It worsened scoreline log loss by +0.001795 (95% block-bootstrap interval [-0.000809, +0.004035]), MATCH_ODDS by +0.001249 [+0.000513, +0.002031], and totals by +0.003002 [+0.000894, +0.004778]. BTTS was unresolved. MATCH_ODDS ECE improved slightly, but proper loss degraded, so the calibration diagnostic did not justify the challenger. Fold 4 was not scored.
+
+This is a rigorous negative result. Prediction quality did not improve, candidate quality did not improve, and no live logic or ledger row changed. The partially pooled intensity correction is rejected; Dixon-Coles remains `RESEARCH_ONLY`; classification remains `RESEARCH_AND_SHADOW`. The next model experiment should wait for a genuinely later untouched era and test a distinct mechanism such as dynamic home advantage or a fully refitted hierarchical score model rather than another post-hoc total-intensity rescaling.
+
+Verification: 246 tests, repository-wide Ruff, mypy across 165 source files, warehouse integrity, evaluation artifact digest verification, `git diff --check`, and read-only reconciliation of the persisted 12-fixture report all passed.

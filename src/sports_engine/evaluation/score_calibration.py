@@ -288,7 +288,7 @@ def _stage_evidence(
     return evidence, rows
 
 
-def _score_outputs(frame: pl.DataFrame, scale: float) -> dict[str, np.ndarray]:
+def _score_outputs(frame: pl.DataFrame, scale: float | np.ndarray) -> dict[str, np.ndarray]:
     rows = frame.select(
         "home_expected_goals",
         "away_expected_goals",
@@ -300,8 +300,17 @@ def _score_outputs(frame: pl.DataFrame, scale: float) -> dict[str, np.ndarray]:
     btts: list[float] = []
     totals: list[float] = []
     scoreline_loss: list[float] = []
-    for home_rate, away_rate, rho, home_goals, away_goals in rows:
-        matrix = _scaled_score_matrix(float(home_rate), float(away_rate), float(rho), scale)
+    scales = (
+        np.asarray(scale, dtype=float)
+        if isinstance(scale, np.ndarray)
+        else np.full(frame.height, scale, dtype=float)
+    )
+    if scales.shape != (frame.height,):
+        raise ValueError("Score calibration requires one scale per fixture")
+    for (home_rate, away_rate, rho, home_goals, away_goals), row_scale in zip(
+        rows, scales, strict=True
+    ):
+        matrix = _scaled_score_matrix(float(home_rate), float(away_rate), float(rho), float(row_scale))
         indices = np.indices(matrix.shape)
         match_odds.append(
             [float(np.tril(matrix, -1).sum()), float(np.trace(matrix)), float(np.triu(matrix, 1).sum())]

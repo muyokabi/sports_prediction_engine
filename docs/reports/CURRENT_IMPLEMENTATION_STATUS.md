@@ -75,6 +75,16 @@ The scale fitted on folds 1-2 was 0.979780 and failed the 2,217-row fold-3 valid
 
 Post-change verification: 242 tests passed, Ruff passed, mypy passed for 164 source files, warehouse integrity passed, and the current persisted report was re-reconciled to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
 
+## Competition-intensity experiment — 2026-10-14
+
+PXR-003 added a research-only evaluator for a shrunk competition scoring-rate correction. It binds the exact source prediction artifact and read-only fixture-to-competition mapping, selects shrinkage chronologically, preserves one normalized Dixon-Coles score matrix, and assigns scale 1.0 to sparse or unseen competitions rather than borrowing another competition's rate.
+
+The selected 400-goal prior exposure estimated 20 competition scales from folds 1-2. On fold 3, 1,603/2,217 fixtures received an estimated scale and 614 retained the explicit fallback. The challenger worsened realized-score log loss from 3.007913 to 3.009708; the paired difference was +0.001795 with 95% block-bootstrap interval [-0.000809, +0.004035]. MATCH_ODDS and totals log losses worsened significantly, while BTTS was unresolved. The predeclared gate rejected the challenger and fold 4 remained unscored.
+
+No production ledger, served probability, candidate, or governance state changed. Prediction quality and candidate quality did not improve; research quality improved by ruling out another plausible but unstable calibration shortcut. Dixon-Coles remains `RESEARCH_ONLY`, and system classification remains `RESEARCH_AND_SHADOW`.
+
+Post-change verification: 246 tests passed, Ruff passed, mypy passed for 165 source files, warehouse integrity passed, the evaluation artifact digest matched, and the persisted 12-fixture report reconciled to ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
 ## Durable evidence
 
 - Documentation map: `docs/README.md`
