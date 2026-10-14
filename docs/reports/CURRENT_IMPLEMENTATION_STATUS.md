@@ -59,6 +59,14 @@ The schema-33 warehouse was backed up and verified before migration at:
 
 The correct next step is continued prospective collection and settlement, followed by predeclared chronological evaluation—not weaker gates or reinterpretation of research rankings as bets.
 
+## Prediction-family experiment — 2026-10-14
+
+PXR-001 extended new score-model evaluation artifacts with coherent BTTS and over/under 2.5 probabilities, observed goals, family-specific proper scores, direct-event calibration, fold-local empirical baselines, and paired chronological block-bootstrap comparison. On 9,460 identical out-of-fold fixtures, Dixon–Coles BTTS recorded log loss 0.691331 / Brier 0.248950 / ECE 0.035114; over 2.5 recorded 0.689288 / 0.247858 / 0.041127. Neither family clearly outperformed the simple fold-local event-rate baseline. Only 18/28 adequately sampled competitions passed the BTTS ECE bound and 15/28 passed the totals bound.
+
+The hypothesis that global score-family evidence was sufficient for blanket validation was rejected. No live calibration, probability-scope, role, prediction, price, or opportunity row was changed. BTTS and totals remain research-priced but fail closed for the evidence-qualified shortlist. The durable record is `docs/research/PREDICTION_EXPERIMENT_REGISTER.md`; the implementation/result summary is `docs/reports/PREDICTION_PATH_UPGRADE_REPORT.md`.
+
+Post-change verification: 239 tests passed, Ruff passed, mypy passed for 163 source files, and warehouse integrity passed. The final offline acceptance report was re-reconciled to the ledger: 12 expected / 12 terminal fixtures, ten predictions, 467 opportunities, 135 research-value signals, and zero shadow/production labels.
+
 ## Durable evidence
 
 - Documentation map: `docs/README.md`

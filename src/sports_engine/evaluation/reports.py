@@ -13,8 +13,9 @@ import polars as pl
 
 from sports_engine.core.paths import dated_artifact_directory
 from sports_engine.evaluation.bookmaker_baseline import bookmaker_baseline_metrics
-from sports_engine.evaluation.metrics import probability_metrics
+from sports_engine.evaluation.metrics import binary_probability_metrics, probability_metrics
 from sports_engine.evaluation.uncertainty import (
+    binary_per_fixture_loss,
     chronological_block_bootstrap,
     paired_metric_difference,
     per_fixture_loss,
@@ -51,6 +52,12 @@ class EvaluationCandidate:
     calibration_method: str | None
     feature_columns: tuple[str, ...]
     training_mode: str
+
+
+@dataclass(frozen=True, slots=True)
+class FoldPrediction:
+    match_odds: np.ndarray
+    score_markets: dict[str, np.ndarray]
 
 
 class WalkForwardEvaluator:
@@ -102,9 +109,13 @@ class WalkForwardEvaluator:
         all_probabilities: list[np.ndarray] = []
         all_test_indexes: list[np.ndarray] = []
         all_fold_indexes: list[np.ndarray] = []
+        all_score_markets: dict[str, list[np.ndarray]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
+        all_score_baselines: dict[str, list[np.ndarray]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
+        family_fold_metrics: dict[str, list[dict[str, Any]]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
         fold_metrics: list[dict[str, Any]] = []
         for fold_number, fold in enumerate(folds, start=1):
-            probabilities = self._fit_predict(model_type, dataset.frame, fold.train, fold.test, candidate)
+            prediction = self._fit_predict(model_type, dataset.frame, fold.train, fold.test, candidate)
+            probabilities = prediction.match_odds
             observed = targets[fold.test]
             metrics = probability_metrics(observed, probabilities)
             fold_metrics.append(metrics)
@@ -112,6 +123,16 @@ class WalkForwardEvaluator:
             all_probabilities.append(probabilities)
             all_test_indexes.append(fold.test)
             all_fold_indexes.append(np.full(len(fold.test), fold_number, dtype=int))
+            if prediction.score_markets:
+                family_targets = self._score_family_targets(dataset.frame, fold.test)
+                train_targets = self._score_family_targets(dataset.frame, fold.train)
+                for family, family_probabilities in prediction.score_markets.items():
+                    family_baseline = np.full(len(fold.test), float(train_targets[family].mean()))
+                    all_score_markets[family].append(family_probabilities)
+                    all_score_baselines[family].append(family_baseline)
+                    family_fold_metrics[family].append(
+                        binary_probability_metrics(family_targets[family], family_probabilities)
+                    )
         combined_targets = np.concatenate(all_targets)
         combined_probabilities = np.vstack(all_probabilities)
         aggregate: dict[str, Any] = probability_metrics(combined_targets, combined_probabilities)
@@ -134,6 +155,18 @@ class WalkForwardEvaluator:
             )
             for metric in ("log_loss", "brier", "rps")
         }
+        if all_score_markets["BTTS"]:
+            family_targets = self._score_family_targets(dataset.frame, combined_indexes)
+            aggregate["market_family_metrics"] = {}
+            for family in ("BTTS", "TOTAL_GOALS_2_5"):
+                probabilities = np.concatenate(all_score_markets[family])
+                empirical_baseline = np.concatenate(all_score_baselines[family])
+                aggregate["market_family_metrics"][family] = self._binary_family_evidence(
+                    family_targets[family],
+                    probabilities,
+                    empirical_baseline,
+                    family_fold_metrics[family],
+                )
         baseline = self._baseline(dataset.frame, combined_indexes, combined_targets)
         if baseline is not None:
             aggregate["bookmaker_baseline"] = baseline
@@ -188,6 +221,29 @@ class WalkForwardEvaluator:
                 "away_probability": combined_probabilities[:, 2],
             }
         )
+        if all_score_markets["BTTS"]:
+            goals = self._score_family_targets(dataset.frame, combined_indexes)
+            prediction_frame = prediction_frame.with_columns(
+                pl.Series(
+                    "target_home_goals",
+                    dataset.frame["target_home_goals"].cast(pl.Int64).to_numpy()[combined_indexes],
+                ),
+                pl.Series(
+                    "target_away_goals",
+                    dataset.frame["target_away_goals"].cast(pl.Int64).to_numpy()[combined_indexes],
+                ),
+                pl.Series("btts_target", goals["BTTS"]),
+                pl.Series("btts_yes_probability", np.concatenate(all_score_markets["BTTS"])),
+                pl.Series("btts_empirical_baseline", np.concatenate(all_score_baselines["BTTS"])),
+                pl.Series("over_2_5_target", goals["TOTAL_GOALS_2_5"]),
+                pl.Series(
+                    "over_2_5_probability", np.concatenate(all_score_markets["TOTAL_GOALS_2_5"])
+                ),
+                pl.Series(
+                    "over_2_5_empirical_baseline",
+                    np.concatenate(all_score_baselines["TOTAL_GOALS_2_5"]),
+                ),
+            )
         prediction_buffer = io.BytesIO()
         prediction_frame.write_parquet(prediction_buffer, compression="zstd")
         prediction_payload = prediction_buffer.getvalue()
@@ -468,7 +524,7 @@ class WalkForwardEvaluator:
         train: np.ndarray,
         test: np.ndarray,
         candidate: EvaluationCandidate,
-    ) -> np.ndarray:
+    ) -> FoldPrediction:
         fit = train
         calibration = np.asarray([], dtype=int)
         if candidate.calibration_method:
@@ -481,7 +537,7 @@ class WalkForwardEvaluator:
             fit = np.asarray([index for index in train if timestamps[int(index)] not in calibration_times])
             calibration = np.asarray([index for index in train if timestamps[int(index)] in calibration_times])
 
-        probabilities, calibration_probabilities = self._fit_predict_raw(
+        probabilities, calibration_probabilities, score_markets = self._fit_predict_raw(
             model_type,
             frame,
             fit,
@@ -495,8 +551,8 @@ class WalkForwardEvaluator:
                 candidate.calibration_method,
                 random_seed=self.random_seed,
             ).fit(calibration_probabilities, targets[calibration])
-            return calibrator.transform(probabilities)
-        return probabilities
+            probabilities = calibrator.transform(probabilities)
+        return FoldPrediction(probabilities, score_markets)
 
     def _fit_predict_raw(
         self,
@@ -506,7 +562,7 @@ class WalkForwardEvaluator:
         test: np.ndarray,
         calibration: np.ndarray,
         candidate: EvaluationCandidate,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
         hyperparameters = candidate.hyperparameters
         if model_type in {"elo", "poisson", "dixon-coles"}:
             matches = list(
@@ -548,7 +604,16 @@ class WalkForwardEvaluator:
             calibration_predictions = model.predict_proba(
                 [(matches[index][0], matches[index][1]) for index in calibration]
             )
-            return predictions, calibration_predictions
+            score_markets: dict[str, np.ndarray] = {}
+            if model_type in {"poisson", "dixon-coles"}:
+                market_rows = [
+                    model.market_probabilities(matches[index][0], matches[index][1]) for index in test
+                ]
+                score_markets = {
+                    "BTTS": np.asarray([row["btts_yes"] for row in market_rows], dtype=float),
+                    "TOTAL_GOALS_2_5": np.asarray([row["over_2_5"] for row in market_rows], dtype=float),
+                }
+            return predictions, calibration_predictions, score_markets
         columns = list(candidate.feature_columns)
         missing = sorted(set(columns) - set(frame.columns))
         if missing:
@@ -573,7 +638,80 @@ class WalkForwardEvaluator:
                 n_estimators=int(hyperparameters.get("n_estimators", 300)),
             )
         model.fit(matrix[train], targets[train])
-        return self._ordered_probabilities(model, matrix[test]), self._ordered_probabilities(model, matrix[calibration])
+        return (
+            self._ordered_probabilities(model, matrix[test]),
+            self._ordered_probabilities(model, matrix[calibration]),
+            {},
+        )
+
+    @staticmethod
+    def _score_family_targets(frame: pl.DataFrame, indexes: np.ndarray) -> dict[str, np.ndarray]:
+        home = frame["target_home_goals"].cast(pl.Int64).to_numpy()[indexes]
+        away = frame["target_away_goals"].cast(pl.Int64).to_numpy()[indexes]
+        return {
+            "BTTS": ((home > 0) & (away > 0)).astype(int),
+            "TOTAL_GOALS_2_5": ((home + away) >= 3).astype(int),
+        }
+
+    def _binary_family_evidence(
+        self,
+        targets: np.ndarray,
+        probabilities: np.ndarray,
+        baseline: np.ndarray,
+        fold_metrics: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        metrics = binary_probability_metrics(targets, probabilities)
+        metrics["fold_metrics"] = fold_metrics
+        metrics["metric_uncertainty"] = {
+            metric: asdict(
+                chronological_block_bootstrap(
+                    binary_per_fixture_loss(targets, probabilities, metric),
+                    seed=self.random_seed,
+                )
+            )
+            for metric in ("log_loss", "brier")
+        }
+        metrics["empirical_rate_baseline"] = binary_probability_metrics(targets, baseline)
+        metrics["paired_empirical_rate_difference"] = {
+            metric: asdict(
+                chronological_block_bootstrap(
+                    binary_per_fixture_loss(targets, probabilities, metric)
+                    - binary_per_fixture_loss(targets, baseline, metric),
+                    seed=self.random_seed,
+                )
+            )
+            for metric in ("log_loss", "brier")
+        }
+        metrics["equal_mass_reliability"] = self._binary_equal_mass_calibration(targets, probabilities)
+        return metrics
+
+    @classmethod
+    def _binary_equal_mass_calibration(
+        cls, targets: np.ndarray, probabilities: np.ndarray, maximum_bins: int = 10
+    ) -> list[dict[str, Any]]:
+        order = np.argsort(probabilities, kind="stable")
+        bin_count = min(maximum_bins, max(1, len(order) // 50))
+        bands: list[dict[str, Any]] = []
+        for members in np.array_split(order, bin_count):
+            if not len(members):
+                continue
+            predicted = float(probabilities[members].mean())
+            successes = int(targets[members].sum())
+            observed = successes / len(members)
+            lower, upper = cls._wilson_interval(successes, len(members))
+            bands.append(
+                {
+                    "rows": int(len(members)),
+                    "minimum_probability": float(probabilities[members].min()),
+                    "maximum_probability": float(probabilities[members].max()),
+                    "mean_probability": predicted,
+                    "observed_frequency": observed,
+                    "calibration_gap": observed - predicted,
+                    "observed_interval_95": {"lower": lower, "upper": upper},
+                    "statistically_resolved": not lower <= predicted <= upper,
+                }
+            )
+        return bands
 
     @staticmethod
     def _ordered_probabilities(model: Any, matrix: np.ndarray) -> np.ndarray:

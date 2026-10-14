@@ -16,15 +16,40 @@ class MetricUncertainty:
 def per_fixture_loss(y_true: np.ndarray, probabilities: np.ndarray, metric: str) -> np.ndarray:
     encoded = np.eye(probabilities.shape[1])[y_true]
     if metric == "log_loss":
-        return -np.log(np.clip(probabilities[np.arange(len(y_true)), y_true], 1e-15, 1.0))
+        return np.asarray(
+            -np.log(np.clip(probabilities[np.arange(len(y_true)), y_true], 1e-15, 1.0)),
+            dtype=float,
+        )
     if metric == "brier":
-        return np.sum((probabilities - encoded) ** 2, axis=1)
+        return np.asarray(np.sum((probabilities - encoded) ** 2, axis=1), dtype=float)
     if metric == "rps":
-        return np.sum(
-            (np.cumsum(probabilities, axis=1)[:, :-1] - np.cumsum(encoded, axis=1)[:, :-1]) ** 2,
-            axis=1,
-        ) / (probabilities.shape[1] - 1)
+        return np.asarray(
+            np.sum(
+                (np.cumsum(probabilities, axis=1)[:, :-1] - np.cumsum(encoded, axis=1)[:, :-1]) ** 2,
+                axis=1,
+            )
+            / (probabilities.shape[1] - 1),
+            dtype=float,
+        )
     raise ValueError(f"Unsupported probability metric {metric!r}")
+
+
+def binary_per_fixture_loss(y_true: np.ndarray, probabilities: np.ndarray, metric: str) -> np.ndarray:
+    observed = np.asarray(y_true, dtype=float)
+    predicted = np.asarray(probabilities, dtype=float)
+    if observed.ndim != 1 or predicted.ndim != 1 or len(observed) != len(predicted) or not len(observed):
+        raise ValueError("Binary targets and probabilities must be non-empty aligned vectors")
+    if metric == "log_loss":
+        clipped = np.clip(predicted, 1e-15, 1 - 1e-15)
+        result: np.ndarray = np.asarray(
+            -(observed * np.log(clipped) + (1 - observed) * np.log(1 - clipped)),
+            dtype=float,
+        )
+        return result
+    if metric == "brier":
+        result = np.asarray((predicted - observed) ** 2, dtype=float)
+        return result
+    raise ValueError(f"Unsupported binary probability metric {metric!r}")
 
 
 def chronological_block_bootstrap(

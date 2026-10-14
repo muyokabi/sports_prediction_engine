@@ -8,11 +8,16 @@ import polars as pl
 from sports_engine.evaluation.comparison import compare_evaluation_reports
 
 
-def _report(tmp_path: Path, model_type: str, probabilities: list[list[float]]) -> Path:
+def _report(
+    tmp_path: Path,
+    model_type: str,
+    probabilities: list[list[float]],
+    *,
+    score_probability: float | None = None,
+) -> Path:
     rows = len(probabilities)
     prediction_path = tmp_path / f"{model_type}.predictions.parquet"
-    pl.DataFrame(
-        {
+    data: dict[str, object] = {
             "fixture_id": [f"fixture-{index}" for index in range(rows)],
             "prediction_timestamp": [datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=index) for index in range(rows)],
             "fold": [1] * rows,
@@ -20,8 +25,17 @@ def _report(tmp_path: Path, model_type: str, probabilities: list[list[float]]) -
             "home_probability": [row[0] for row in probabilities],
             "draw_probability": [row[1] for row in probabilities],
             "away_probability": [row[2] for row in probabilities],
-        }
-    ).write_parquet(prediction_path)
+    }
+    if score_probability is not None:
+        data.update(
+            {
+                "btts_target": [index % 2 for index in range(rows)],
+                "btts_yes_probability": [score_probability] * rows,
+                "over_2_5_target": [index % 2 for index in range(rows)],
+                "over_2_5_probability": [score_probability] * rows,
+            }
+        )
+    pl.DataFrame(data).write_parquet(prediction_path)
     raw = prediction_path.read_bytes()
     path = tmp_path / f"{model_type}.json"
     path.write_text(
@@ -64,3 +78,23 @@ def test_paired_comparison_uses_identical_out_of_fold_predictions(tmp_path: Path
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert payload["comparisons"][0]["verdict"] == "CANDIDATE_DOMINATES"
     assert payload["comparisons"][0]["rows"] == rows
+
+
+def test_paired_comparison_keeps_score_market_families_separate(tmp_path: Path) -> None:
+    rows = 60
+    match_probabilities = [[1 / 3, 1 / 3, 1 / 3] for _ in range(rows)]
+    candidate = _report(
+        tmp_path, "candidate", match_probabilities, score_probability=0.5
+    )
+    comparator = _report(
+        tmp_path, "comparator", match_probabilities, score_probability=0.9
+    )
+
+    result_path = compare_evaluation_reports([candidate, comparator], tmp_path / "comparisons", random_seed=7)
+
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert {item["market_family"] for item in payload["score_family_comparisons"]} == {
+        "BTTS",
+        "TOTAL_GOALS_2_5",
+    }
+    assert all(item["verdict"] == "CANDIDATE_DOMINATES" for item in payload["score_family_comparisons"])

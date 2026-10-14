@@ -210,6 +210,39 @@ def test_walk_forward_evaluation_writes_reproducible_report(tmp_path: Path) -> N
     connection.close()
 
 
+def test_score_model_evaluation_retains_family_specific_probabilities(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "score-family-evaluation.duckdb")
+    migrate(connection)
+    _dataset(connection, tmp_path, row_count=45)
+    candidate = ModelTrainer(connection, tmp_path / "artifacts", random_seed=7, cpu_threads=1).train(
+        "poisson", dataset_name="synthetic"
+    )
+    report = WalkForwardEvaluator(connection, tmp_path / "reports", random_seed=7, cpu_threads=1).evaluate(
+        "poisson", dataset_name="synthetic"
+    )
+    payload = json.loads(report.path.read_text())
+    assert payload["candidate_version"] == candidate.version
+    families = payload["aggregate_metrics"]["market_family_metrics"]
+    assert set(families) == {"BTTS", "TOTAL_GOALS_2_5"}
+    for evidence in families.values():
+        assert evidence["probability_integrity"]["passed"] is True
+        assert evidence["metric_uncertainty"]["log_loss"]["method"].startswith(
+            "chronological-block-bootstrap"
+        )
+        assert evidence["paired_empirical_rate_difference"]["brier"]["samples"] == 2_000
+        assert len(evidence["fold_metrics"]) == 4
+    predictions = pl.read_parquet(payload["prediction_artifact"]["path"])
+    assert {
+        "target_home_goals",
+        "target_away_goals",
+        "btts_yes_probability",
+        "over_2_5_probability",
+    } <= set(predictions.columns)
+    assert predictions.select(pl.col("btts_yes_probability").is_between(0, 1).all()).item()
+    assert predictions.select(pl.col("over_2_5_probability").is_between(0, 1).all()).item()
+    connection.close()
+
+
 def test_probability_scope_validation_is_bound_to_exact_model_and_fails_closed(tmp_path: Path) -> None:
     connection = connect(tmp_path / "scope-validation.duckdb")
     migrate(connection)

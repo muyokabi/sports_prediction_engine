@@ -9,7 +9,11 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from sports_engine.evaluation.uncertainty import paired_metric_difference
+from sports_engine.evaluation.uncertainty import (
+    binary_per_fixture_loss,
+    chronological_block_bootstrap,
+    paired_metric_difference,
+)
 
 PREDICTION_COLUMNS = {
     "fixture_id",
@@ -18,6 +22,11 @@ PREDICTION_COLUMNS = {
     "home_probability",
     "draw_probability",
     "away_probability",
+}
+
+SCORE_FAMILY_COLUMNS = {
+    "BTTS": ("btts_target", "btts_yes_probability"),
+    "TOTAL_GOALS_2_5": ("over_2_5_target", "over_2_5_probability"),
 }
 
 
@@ -59,6 +68,7 @@ def compare_evaluation_reports(
         ),
     )
     comparisons: list[dict[str, Any]] = []
+    score_family_comparisons: list[dict[str, Any]] = []
     for candidate, comparator in combinations(ordered, 2):
         left = candidate["predictions"].sort("prediction_timestamp", "fixture_id")
         right = comparator["predictions"].sort("prediction_timestamp", "fixture_id")
@@ -99,6 +109,50 @@ def compare_evaluation_reports(
                 ),
             }
         )
+        shared_families = [
+            family
+            for family, columns in SCORE_FAMILY_COLUMNS.items()
+            if set(columns) <= set(left.columns) and set(columns) <= set(right.columns)
+        ]
+        for family in shared_families:
+            target_column, probability_column = SCORE_FAMILY_COLUMNS[family]
+            family_targets = left[target_column].to_numpy()
+            if not np.array_equal(family_targets, right[target_column].to_numpy()):
+                raise ValueError(f"{family} targets disagree for identical fixtures")
+            family_intervals = {
+                metric: asdict(
+                    chronological_block_bootstrap(
+                        binary_per_fixture_loss(
+                            family_targets, left[probability_column].to_numpy(), metric
+                        )
+                        - binary_per_fixture_loss(
+                            family_targets, right[probability_column].to_numpy(), metric
+                        ),
+                        seed=random_seed,
+                    )
+                )
+                for metric in ("log_loss", "brier")
+            }
+            candidate_dominates = all(float(value["upper"]) < 0 for value in family_intervals.values())
+            comparator_dominates = all(float(value["lower"]) > 0 for value in family_intervals.values())
+            score_family_comparisons.append(
+                {
+                    "market_family": family,
+                    "candidate_model_type": candidate["payload"]["model_type"],
+                    "candidate_version": candidate["payload"]["candidate_version"],
+                    "comparator_model_type": comparator["payload"]["model_type"],
+                    "comparator_version": comparator["payload"]["candidate_version"],
+                    "rows": left.height,
+                    "paired_loss_difference_candidate_minus_comparator": family_intervals,
+                    "verdict": (
+                        "CANDIDATE_DOMINATES"
+                        if candidate_dominates
+                        else "COMPARATOR_DOMINATES"
+                        if comparator_dominates
+                        else "NO_SIGNIFICANT_DOMINANCE"
+                    ),
+                }
+            )
 
     created_at = datetime.now(UTC)
     payload = {
@@ -118,9 +172,10 @@ def compare_evaluation_reports(
             for item in ordered
         ],
         "comparisons": comparisons,
+        "score_family_comparisons": score_family_comparisons,
         "interpretation": (
             "Dominance requires the 95% chronological block-bootstrap interval to favour one model "
-            "for log loss, Brier, and RPS on the same fixtures."
+            "for every applicable proper loss on the same fixtures."
         ),
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]

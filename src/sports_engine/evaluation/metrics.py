@@ -72,6 +72,76 @@ def probability_metrics(y_true: np.ndarray, probabilities: np.ndarray) -> dict[s
     }
 
 
+def binary_probability_metrics(
+    y_true: np.ndarray, probabilities: np.ndarray, bins: int = 10
+) -> dict[str, Any]:
+    """Evaluate an event probability without converting it to winner confidence.
+
+    BTTS and totals are binary events.  Their calibration must therefore use the
+    quoted event probability directly rather than the multiclass top-label ECE.
+    """
+    observed = np.asarray(y_true, dtype=int)
+    predicted = np.asarray(probabilities, dtype=float)
+    integrity = binary_probability_integrity(predicted)
+    if not integrity["passed"]:
+        raise ValueError(f"Invalid binary probabilities: {integrity['reasons']}")
+    if observed.ndim != 1 or len(observed) != len(predicted) or not len(observed):
+        raise ValueError("Binary targets and probabilities must be non-empty aligned vectors")
+    if not np.isin(observed, [0, 1]).all():
+        raise ValueError("Binary targets must contain only zero and one")
+    boundaries = np.linspace(0.0, 1.0, bins + 1)
+    calibration: list[dict[str, float | int]] = []
+    ece = 0.0
+    for index, (lower, upper) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
+        members = (predicted >= lower) & (predicted <= upper if index == bins - 1 else predicted < upper)
+        if not members.any():
+            continue
+        mean_probability = float(predicted[members].mean())
+        observed_frequency = float(observed[members].mean())
+        count = int(members.sum())
+        ece += count / len(observed) * abs(observed_frequency - mean_probability)
+        calibration.append(
+            {
+                "minimum_probability": float(predicted[members].min()),
+                "maximum_probability": float(predicted[members].max()),
+                "mean_probability": mean_probability,
+                "observed_frequency": observed_frequency,
+                "calibration_gap": observed_frequency - mean_probability,
+                "count": count,
+            }
+        )
+    clipped = np.clip(predicted, 1e-15, 1 - 1e-15)
+    return {
+        "log_loss": float(-np.mean(observed * np.log(clipped) + (1 - observed) * np.log(1 - clipped))),
+        "brier": float(np.mean((predicted - observed) ** 2)),
+        "expected_calibration_error": float(ece),
+        "event_rate": float(observed.mean()),
+        "mean_probability": float(predicted.mean()),
+        "accuracy_at_0_5": float(np.mean((predicted >= 0.5) == observed)),
+        "calibration_curve": calibration,
+        "probability_integrity": integrity,
+    }
+
+
+def binary_probability_integrity(probabilities: np.ndarray) -> dict[str, Any]:
+    vector = np.asarray(probabilities, dtype=float)
+    reasons: list[str] = []
+    if vector.ndim != 1 or not len(vector):
+        return {"passed": False, "reasons": ["INVALID_PROBABILITY_SHAPE"]}
+    if not np.isfinite(vector).all():
+        reasons.append("NON_FINITE_PROBABILITY")
+    if (vector < 0).any() or (vector > 1).any():
+        reasons.append("PROBABILITY_OUT_OF_BOUNDS")
+    return {
+        "passed": not reasons,
+        "reasons": reasons,
+        "rows": len(vector),
+        "minimum_probability": float(np.nanmin(vector)),
+        "maximum_probability": float(np.nanmax(vector)),
+        "unique_probabilities_at_6dp": int(len(np.unique(np.round(vector, 6)))),
+    }
+
+
 def probability_integrity(probabilities: np.ndarray) -> dict[str, Any]:
     """Audit probability geometry independently of realized outcomes."""
     matrix = np.asarray(probabilities, dtype=float)
