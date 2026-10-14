@@ -200,3 +200,51 @@ Artifacts:
 The artifact binds the source evaluation and prediction digests, a SHA-256 of the exact fixture-to-competition mapping, the frozen contract, shrinkage sensitivity, competition estimates, validation rows, paired intervals, and the output Parquet digest. This negative result rejects a single total-intensity multiplier by competition; it does not reject dynamic home advantage, competition-specific low-score dependence, overdispersion, or a fully refitted hierarchical score model. A new challenger should wait for a genuinely later untouched era and should target a mechanism this experiment did not already falsify.
 
 Verification: 246 tests passed, repository-wide Ruff passed, mypy passed for 165 source files, `git diff --check` passed, warehouse integrity passed, and the generated 2,217-row Parquet digest matched its report. Persisted analysis `ec603dc8-13c4-4431-aec7-eb3a4e51b017` remained `COMPLETE` and reconciled read-only to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels; its HTML exposes the same operational counts.
+
+## PXR-004 — Fixture-applicability discrimination audit
+
+**Opened / completed:** 2026-10-14 (Africa/Nairobi)
+
+**Decision:** `CURRENT_POLICY_NOT_STABLY_DISCRIMINATIVE / PRODUCTION UNCHANGED`
+
+**Production ledger mutation:** none. The warehouse was opened read-only; only new immutable evaluation artifacts were written.
+
+### Hypothesis and frozen contract
+
+The existing five-effective-match floor may identify a lower-risk subset, but its model-manifest validation checked only absolute loss ceilings. PXR-004 froze that existing threshold and tested whether accepted fixtures had lower multiclass log loss and Brier loss than rejected fixtures in every chronological fold. Each group required at least 100 rows, and discrimination required the accepted-minus-rejected 95% chronological moving-block-bootstrap upper bound to be below zero for both proper losses in every fold.
+
+This is explicitly a retrospective audit, not an untouched test: the four source folds had already been evaluated by PXR-001 and the later folds had been examined by PXR-002/PXR-003. No alternative threshold was searched. The result cannot promote a model, alter fixture eligibility, or validate real-money actionability.
+
+### Lineage
+
+| Item | Evidence |
+|---|---|
+| Dataset / hash | `automatic-models-20261013T220836790988Z` / `9c5d616d445e807c6c6ff087f0f498429cfb5fd34274c8aec6bac68c84cdb879` |
+| Feature-quality sidecar | `data/parquet/features/automatic-models-20261013T220836790988Z-9c5d616d445e.parquet.feature-quality.json` |
+| Score model | `dixon-coles-20261013T223455579046Z-92b51b5e` |
+| Source evaluation | `artifacts/evaluation/2026/10/14/dixon-coles-9c5d616d445e-942580ce0285.json` |
+| Audit artifact | `artifacts/evaluation/2026/10/14/applicability-discrimination-9c5d616d445e-a8f1ec5815ea.json` |
+| Applicability definition | minimum of home/away recency-weighted fitted matches, half-life bound to the fold model, threshold 5.0 |
+| Historical market baseline | unavailable; not needed for this risk-discrimination audit and no market claim is made |
+
+The rebuilt prediction artifact retains both raw and effective home/away representation for every fold and is digest-bound to its report. Effective histories use only the fold's fitted rows and each fixture's prediction timestamp.
+
+### Chronological result
+
+| Fold / period | Accepted / rejected | Coverage | Accepted / rejected log loss | Difference (95% moving-block CI) | Accepted / rejected ECE |
+|---|---:|---:|---:|---:|---:|
+| 1 / 2025-04-12 to 2026-01-06 | 1,948 / 215 | 90.06% | 0.980464 / 1.063596 | -0.083132 [-0.127742, -0.036123] | 0.018762 / 0.058908 |
+| 2 / 2026-01-07 to 2026-04-16 | 1,112 / 892 | 55.49% | 0.981357 / 1.069152 | -0.087795 [-0.116021, -0.065807] | 0.021321 / 0.028825 |
+| 3 / 2026-04-16 to 2026-08-13 | 1,380 / 837 | 62.25% | 1.059299 / 1.063282 | -0.003984 [-0.036378, +0.028932] | 0.039226 / 0.028537 |
+| 4 / 2026-08-13 to 2026-10-12 | 1,499 / 1,577 | 48.73% | 1.002682 / 1.067579 | -0.064896 [-0.089226, -0.040880] | 0.025806 / 0.035475 |
+| Aggregate | 5,939 / 3,521 | 62.78% | 1.004557 / 1.066713 | -0.062155 [-0.076487, -0.044868] | 0.017012 / 0.016587 |
+
+Aggregate Brier difference was -0.043922 [-0.053983, -0.031744]. Fold 3 failed the stability rule: its Brier difference was -0.003662 [-0.026200, +0.019297], and accepted fixtures were less well calibrated by ECE. All probability-integrity checks passed.
+
+### Decision, candidate effect, and next experiment
+
+The existing floor is directionally useful in three folds and strongly useful in aggregate, but it is not a stable uncertainty discriminator under the frozen rule. No threshold, applicability state, prediction, price, opportunity, role, calibration record, or shortlist rule changed. Prediction quality and candidate quality therefore did not improve in production; evidence quality improved by correcting an overstrong interpretation of the existing `validated` metadata.
+
+The next experiment must be predeclared before a genuinely later era accumulates. It should freeze threshold 5.0, log loss/Brier risk differences, calibration, minimum group sizes, and coverage; evaluate temporal and competition subgroups; and permit a policy change only if the new era confirms lower accepted risk without a calibration regression. Alternative thresholds must not be selected on that final era.
+
+Verification: 249 tests passed, repository-wide Ruff passed, mypy passed for 167 source files, `git diff --check` passed, warehouse integrity passed, and both source evaluation and prediction digests were verified. Persisted analysis `ec603dc8-13c4-4431-aec7-eb3a4e51b017` remains the real-report reconciliation target: 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.

@@ -85,6 +85,14 @@ No production ledger, served probability, candidate, or governance state changed
 
 Post-change verification: 246 tests passed, Ruff passed, mypy passed for 165 source files, warehouse integrity passed, the evaluation artifact digest matched, and the persisted 12-fixture report reconciled to ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
 
+## Applicability-discrimination audit — 2026-10-14
+
+PXR-004 added exact fold-local effective team-history evidence to score-model evaluation artifacts and a read-only retrospective risk-coverage audit. The current five-effective-match floor retained 5,939/9,460 out-of-fold fixtures and showed a favourable aggregate log-loss difference of -0.062155 (95% moving-block interval [-0.076487, -0.044868]) versus rejected fixtures. It did not pass the temporal stability rule: fold 3 log-loss and Brier intervals both crossed zero, and accepted ECE was worse than rejected ECE.
+
+No production applicability state, probability, price, opportunity, calibration, role, or shortlist rule changed. The existing floor remains a conservative fail-closed gate, not a newly proven confidence interval or stable uncertainty discriminator. Prediction quality and candidate quality did not improve; the evidence deficit is now precisely measured. A genuinely later prospective era is required for confirmation. Classification remains `RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`.
+
+Post-change verification: 249 tests passed, Ruff passed, mypy passed for 167 source files, warehouse integrity passed, source/evaluation artifact hashes passed, and the persisted acceptance report remained reconciled to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
 ## Durable evidence
 
 - Documentation map: `docs/README.md`

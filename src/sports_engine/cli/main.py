@@ -336,6 +336,29 @@ def evaluate_competition_calibration(
     typer.echo(f"competition-calibration={path}")
 
 
+@app.command("evaluate-applicability")
+def evaluate_applicability(
+    report: Path,
+    minimum_effective_matches: float = typer.Option(5.0, min=0.0),
+) -> None:
+    """Retrospectively audit whether a fixed history floor discriminates risk."""
+    from sports_engine.core.config import load_config
+    from sports_engine.evaluation.applicability_research import evaluate_applicability_discrimination
+
+    config = load_config()
+    try:
+        path = evaluate_applicability_discrimination(
+            report,
+            config.artifacts_dir / "evaluation",
+            random_seed=config.models.random_seed,
+            minimum_effective_matches=minimum_effective_matches,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"applicability-discrimination={path}")
+
+
 @app.command("backtest")
 def backtest(all_models: bool = typer.Option(False, "--all")) -> None:
     from sports_engine.cli.runtime import open_database

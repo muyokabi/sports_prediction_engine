@@ -242,8 +242,16 @@ def test_score_model_evaluation_retains_family_specific_probabilities(tmp_path: 
         "dixon_coles_rho",
         "home_training_matches",
         "away_training_matches",
+        "home_effective_training_matches",
+        "away_effective_training_matches",
     } <= set(predictions.columns)
     assert predictions.select(pl.col("btts_yes_probability").is_between(0, 1).all()).item()
+    assert predictions.select(
+        (pl.col("home_effective_training_matches") >= 0).all()
+        & (pl.col("away_effective_training_matches") >= 0).all()
+        & (pl.col("home_effective_training_matches") <= pl.col("home_training_matches")).all()
+        & (pl.col("away_effective_training_matches") <= pl.col("away_training_matches")).all()
+    ).item()
     assert predictions.select(pl.col("over_2_5_probability").is_between(0, 1).all()).item()
     connection.close()
 

@@ -69,3 +69,13 @@ The selected 400-goal exposure produced 20 estimated competition scales and adju
 This is a rigorous negative result. Prediction quality did not improve, candidate quality did not improve, and no live logic or ledger row changed. The partially pooled intensity correction is rejected; Dixon-Coles remains `RESEARCH_ONLY`; classification remains `RESEARCH_AND_SHADOW`. The next model experiment should wait for a genuinely later untouched era and test a distinct mechanism such as dynamic home advantage or a fully refitted hierarchical score model rather than another post-hoc total-intensity rescaling.
 
 Verification: 246 tests, repository-wide Ruff, mypy across 165 source files, warehouse integrity, evaluation artifact digest verification, `git diff --check`, and read-only reconciliation of the persisted 12-fixture report all passed.
+
+## Follow-up cycle — fixture-applicability discrimination
+
+PXR-004 audited the existing five-effective-match applicability floor rather than inventing a new confidence score. Walk-forward artifacts now retain exact fold-local recency-weighted home/away representation, and a reusable research-only command reports risk, calibration, coverage, and chronological moving-block uncertainty for accepted versus rejected fixtures.
+
+On 9,460 out-of-fold fixtures, the floor retained 62.78% and aggregate accepted log loss was 1.004557 versus 1.066713 for rejected fixtures, a difference of -0.062155 (95% CI [-0.076487, -0.044868]). The result was not stable across time. Fold 3 was unresolved for both log loss (-0.003984 [-0.036378, +0.028932]) and Brier (-0.003662 [-0.026200, +0.019297]); accepted ECE was also worse (0.039226 versus 0.028537).
+
+The current conservative gate remains in place, but it is no longer defensible to treat its prior absolute-ceiling check as proof of stable risk discrimination. No served probability or candidate rule changed. Prediction quality and candidate quality did not improve; applicability evidence became more honest and more reproducible. A genuinely later prospective era is required before changing the threshold or its validation status. Classification remains `RESEARCH_AND_SHADOW`.
+
+Verification: 249 tests passed, Ruff passed, mypy passed for 167 source files, warehouse integrity passed, artifact digests passed, and the persisted acceptance report remains reconciled at 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.

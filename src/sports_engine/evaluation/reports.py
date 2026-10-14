@@ -122,6 +122,8 @@ class WalkForwardEvaluator:
         all_representation: dict[str, list[np.ndarray]] = {
             "home_training_matches": [],
             "away_training_matches": [],
+            "home_effective_training_matches": [],
+            "away_effective_training_matches": [],
         }
         all_score_baselines: dict[str, list[np.ndarray]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
         family_fold_metrics: dict[str, list[dict[str, Any]]] = {"BTTS": [], "TOTAL_GOALS_2_5": []}
@@ -279,6 +281,14 @@ class WalkForwardEvaluator:
                 pl.Series(
                     "away_training_matches",
                     np.concatenate(all_representation["away_training_matches"]),
+                ),
+                pl.Series(
+                    "home_effective_training_matches",
+                    np.concatenate(all_representation["home_effective_training_matches"]),
+                ),
+                pl.Series(
+                    "away_effective_training_matches",
+                    np.concatenate(all_representation["away_effective_training_matches"]),
                 ),
             )
         prediction_buffer = io.BytesIO()
@@ -662,10 +672,28 @@ class WalkForwardEvaluator:
                 market_rows = [model.market_probabilities(home, away) for home, away in fixtures]
                 rates = [model.expected_goals(home, away) for home, away in fixtures]
                 counts: dict[str, int] = {}
+                histories: dict[str, list[datetime]] = {}
                 for index in train:
                     home, away = matches[index][:2]
                     counts[home] = counts.get(home, 0) + 1
                     counts[away] = counts.get(away, 0) + 1
+                    histories.setdefault(home, []).append(timestamps[index])
+                    histories.setdefault(away, []).append(timestamps[index])
+                half_life = float(
+                    hyperparameters.get("time_decay_half_life_days", self.time_decay_half_life_days)
+                )
+                decay = np.log(2.0) / max(half_life, 1e-9)
+
+                def effective_history(team: str, target_time: datetime) -> float:
+                    return float(
+                        sum(
+                            np.exp(
+                                -decay
+                                * max(0.0, (target_time - observed_at).total_seconds() / 86_400)
+                            )
+                            for observed_at in histories.get(team, ())
+                        )
+                    )
                 score_markets = {
                     "BTTS": np.asarray([row["btts_yes"] for row in market_rows], dtype=float),
                     "TOTAL_GOALS_2_5": np.asarray([row["over_2_5"] for row in market_rows], dtype=float),
@@ -683,6 +711,20 @@ class WalkForwardEvaluator:
                     ),
                     "away_training_matches": np.asarray(
                         [counts.get(away, 0) for _, away in fixtures], dtype=int
+                    ),
+                    "home_effective_training_matches": np.asarray(
+                        [
+                            effective_history(home, timestamps[int(index)])
+                            for home, index in zip((item[0] for item in fixtures), test, strict=True)
+                        ],
+                        dtype=float,
+                    ),
+                    "away_effective_training_matches": np.asarray(
+                        [
+                            effective_history(away, timestamps[int(index)])
+                            for away, index in zip((item[1] for item in fixtures), test, strict=True)
+                        ],
+                        dtype=float,
                     ),
                 }
             return predictions, calibration_predictions, score_markets, score_parameters, representation
