@@ -144,31 +144,49 @@ def run_analysis(
             reference_fixtures = int(reference_row[0]) if reference_row else 0
             candidate_row = connection.execute(
                 "SELECT count(*) FILTER (WHERE o.governance_state='PRODUCTION_ACTIONABLE'), "
-                "count(*) FILTER (WHERE o.governance_state='SHADOW_ACTIONABLE') "
+                "count(*) FILTER (WHERE o.governance_state='SHADOW_ACTIONABLE'), "
+                "count(*), count(*) FILTER (WHERE o.governance_state='RESEARCH_VALUE_SIGNAL') "
                 "FROM institutional_predictions i JOIN institutional_opportunities o USING (prediction_id) "
                 "WHERE CAST(i.analysis_run_id AS VARCHAR)=?",
                 [result.analysis_run_id],
             ).fetchone()
             production_candidates = int(candidate_row[0]) if candidate_row else 0
             shadow_candidates = int(candidate_row[1]) if candidate_row else 0
+            research_prices = int(candidate_row[2]) if candidate_row else 0
+            research_value_signals = int(candidate_row[3]) if candidate_row else 0
+            outside_analysis_snapshots_row = connection.execute(
+                "SELECT count(*) FROM odds_snapshots s WHERE CAST(s.job_run_id AS VARCHAR)=? "
+                "AND NOT EXISTS (SELECT 1 FROM institutional_predictions i "
+                "WHERE CAST(i.analysis_run_id AS VARCHAR)=? AND i.target_fixture_id=s.fixture_id)",
+                [run_id, result.analysis_run_id],
+            ).fetchone()
+            outside_analysis_snapshots = (
+                int(outside_analysis_snapshots_row[0]) if outside_analysis_snapshots_row else 0
+            )
             integrity_issues = audit_integrity(connection)
             if integrity_issues:
                 summary.errors.extend(f"{issue.check}={issue.count}" for issue in integrity_issues)
                 raise RuntimeError("Post-run warehouse integrity audit failed: " + ", ".join(summary.errors))
     finally:
         connection.close()
+    newly_withheld = (
+        len(set(learning.trained_versions) & set(learning.withheld_versions)) if learning else 0
+    )
     typer.echo(
         f"Analysis {result.analysis_run_id}: {result.state}; expected={result.expected_fixtures}; "
         f"terminal={result.terminal_fixtures}; reference_fixtures={reference_fixtures}; "
         f"production_candidates={production_candidates}; shadow_candidates={shadow_candidates}; "
-        f"additional_odds_payloads={odds_payloads}; additional_odds_snapshots={odds_snapshots}; "
+        f"research_prices={research_prices}; research_value_signals={research_value_signals}; "
+        f"additional_odds_provider_rows={odds_payloads}; additional_odds_snapshots={odds_snapshots}; "
+        f"additional_odds_snapshots_outside_analysis={outside_analysis_snapshots}; "
         f"unmatched_odds_fixtures={unmatched}; report={result.report_path}"
         f"; settled_predictions={settlement.predictions_settled}; "
         f"settled_shadow={shadow_settlement.opportunities_settled}; "
         f"ml_due={len(learning.due_models) if learning else 0}; "
         f"ml_trained={len(learning.trained_versions) if learning else 0}; "
         f"ml_promoted={len(learning.promoted_versions) if learning else 0}; "
-        f"ml_withheld={len(learning.withheld_versions) if learning else 0}"
+        f"ml_newly_withheld={newly_withheld}; "
+        f"promotion_pool_withheld={len(learning.withheld_versions) if learning else 0}"
     )
 
 

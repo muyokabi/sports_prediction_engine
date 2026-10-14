@@ -1,3 +1,4 @@
+import hashlib
 import json
 import uuid
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from sports_engine.core.enums import Priority
 from sports_engine.core.ids import canonical_id
 from sports_engine.providers.api_football.endpoints import Endpoint
 from sports_engine.providers.base import SportsDataProvider
+from sports_engine.warehouse import checkpoints
 from sports_engine.warehouse.repositories.leagues import upsert_competition_season
 from sports_engine.warehouse.repositories.request_log import latest_raw_path
 
@@ -92,6 +94,8 @@ def score_competition(league: dict[str, Any], season: dict[str, Any]) -> Suitabi
 
 
 class CompetitionDiscoveryService:
+    checkpoint_key = "football.competition_discovery.catalog"
+
     def __init__(
         self,
         connection: duckdb.DuckDBPyConnection,
@@ -114,6 +118,16 @@ class CompetitionDiscoveryService:
             job_run_id=job_run_id,
         )
         raw_path = self.raw_path_resolver(purpose, job_run_id)
+        catalog_hash = hashlib.sha256(
+            json.dumps(payloads, sort_keys=True, separators=(",", ":"), default=str).encode()
+        ).hexdigest()
+        saved = checkpoints.get(self.connection, self.checkpoint_key)
+        if isinstance(saved, dict) and saved.get("content_hash") == catalog_hash:
+            return CompetitionDiscoveryResult(
+                int(saved.get("discovered", 0)),
+                int(saved.get("observation", 0)),
+                int(saved.get("rejected", 0)),
+            )
         discovered = observation = rejected = 0
         for payload in payloads:
             league = payload.get("league") or {}
@@ -197,7 +211,19 @@ class CompetitionDiscoveryService:
             discovered += 1
             observation += state == "OBSERVATION"
             rejected += state == "REJECTED"
-        return CompetitionDiscoveryResult(discovered, observation, rejected)
+        result = CompetitionDiscoveryResult(discovered, observation, rejected)
+        checkpoints.put(
+            self.connection,
+            self.checkpoint_key,
+            {
+                "content_hash": catalog_hash,
+                "discovered": result.discovered,
+                "observation": result.observation,
+                "rejected": result.rejected,
+            },
+            job_run_id,
+        )
+        return result
 
 
 def admit_observation_universe(connection: duckdb.DuckDBPyConnection, *, limit: int) -> list[str]:

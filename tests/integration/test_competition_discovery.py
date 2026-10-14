@@ -12,7 +12,12 @@ from sports_engine.warehouse.migrations import migrate
 
 
 class CatalogProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.good_league_name = "Good League"
+
     def get(self, endpoint: object, parameters: dict[str, Any], **kwargs: Any) -> list[dict[str, Any]]:
+        self.calls += 1
         assert parameters == {"current": "true"}
         full = {
             "fixtures": {
@@ -30,7 +35,7 @@ class CatalogProvider:
                 "seasons": [{"year": 2026, "current": True, "coverage": full}],
             },
             {
-                "league": {"id": 40, "name": "Good League", "country": "Test", "type": "League"},
+                "league": {"id": 40, "name": self.good_league_name, "country": "Test", "type": "League"},
                 "seasons": [{"year": 2026, "current": True, "coverage": full}],
             },
             {
@@ -101,6 +106,50 @@ def test_rediscovery_preserves_admission_and_observation_admission_is_bounded(tm
     assert connection.execute(
         "SELECT universe_state FROM competition_discoveries WHERE competition_season_id=?", admitted
     ).fetchone() == ("OBSERVATION",)
+    connection.close()
+
+
+def test_unchanged_catalog_skips_rewriting_every_competition(tmp_path: Path, monkeypatch: Any) -> None:
+    connection = connect(tmp_path / "unchanged-catalog.duckdb")
+    migrate(connection)
+    provider = CatalogProvider()
+    service = CompetitionDiscoveryService(connection, provider, lambda purpose, run_id: "raw/catalog.json")
+
+    import sports_engine.sports.football.ingestion.discovery as discovery_module
+
+    real_upsert = discovery_module.upsert_competition_season
+    calls = 0
+
+    def counted_upsert(*args: Any, **kwargs: Any) -> object:
+        nonlocal calls
+        calls += 1
+        return real_upsert(*args, **kwargs)
+
+    monkeypatch.setattr(discovery_module, "upsert_competition_season", counted_upsert)
+    first = service.run()
+    first_upsert_count = calls
+    second = service.run()
+
+    assert first == second
+    assert first_upsert_count == 4
+    assert calls == first_upsert_count
+    assert provider.calls == 2
+    connection.close()
+
+
+def test_changed_catalog_is_persisted_after_checkpoint(tmp_path: Path) -> None:
+    connection = connect(tmp_path / "changed-catalog.duckdb")
+    migrate(connection)
+    provider = CatalogProvider()
+    service = CompetitionDiscoveryService(connection, provider, lambda purpose, run_id: "raw/catalog.json")
+    service.run()
+
+    provider.good_league_name = "Renamed Good League"
+    service.run()
+
+    assert connection.execute(
+        "SELECT name FROM competition_discoveries WHERE provider_competition_id=40"
+    ).fetchone() == ("Renamed Good League",)
     connection.close()
 
 

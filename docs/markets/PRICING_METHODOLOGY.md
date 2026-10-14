@@ -34,6 +34,7 @@ market remains evidence-gated; no single method is declared universally superior
 
 ## Abstention
 
-Positive raw edge is insufficient. Actionability additionally requires qualified model evidence, current odds, supported
-settlement, resolved intervening fixtures, acceptable uncertainty/disagreement, and risk capacity. Until those conditions are
-demonstrated, the terminal state remains an explicit abstention.
+Positive raw edge is insufficient. Actionability additionally requires qualified model evidence, a valid pre-kickoff reference
+observation with explicit age and provenance, supported settlement, resolved intervening fixtures, acceptable
+uncertainty/disagreement, and risk capacity. Quote age is exposed for manual rechecking and research; it is not an arbitrary
+expiry veto. Until the independent evidence gates are demonstrated, the terminal state remains an explicit abstention.

@@ -1,6 +1,6 @@
 # Autonomous Institutional Codebase Upgrade Report
 
-Generated 2026-10-12 and independently re-audited 2026-10-13 (Africa/Nairobi).
+Generated 2026-10-12 and independently re-audited through 2026-10-14 (Africa/Nairobi).
 
 Latest independent re-audit: 2026-10-14 (Africa/Nairobi). See the addendum at the end of this report for schema 34, append-only governance, end-to-end runtime repairs, and the Top Research report view.
 
@@ -12,7 +12,7 @@ Final classification: **`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`**.
 
 - Suitable for probability research: **yes**.
 - Suitable for prospective shadow observation: **yes**.
-- Suitable for real-money decision support: **no**. The provider ledger has only 25 fixtures with odds, zero settled shadow observations, and no candidate has the 200 point-in-time market rows required by policy.
+- Suitable for real-money decision support: **no**. The final provider ledger has only 55 fixtures with odds, seven settled shadow observations, no active champion, and no candidate has the 200 point-in-time market rows required by policy.
 
 Prediction availability is not the same as evidence of a tradable edge. Withholding a market role does not suppress probabilities or fair odds.
 
@@ -64,16 +64,16 @@ The calibration fallback now rejects non-finite, negative, or zero-mass output a
 |---|---:|
 | Competitions / competition seasons | 1,241 / 1,443 |
 | Competition states | 10 actionable; 68 observation; 1,061 discovered; 104 rejected |
-| Teams | 876 |
-| Fixtures / completed | 58,670 / 55,732 |
-| Production fixtures / completed | 3,214 / 584 |
+| Teams | 1,046 |
+| Fixtures / completed | 69,542 / 60,815 |
+| Production fixtures / completed | 14,086 / 5,667 |
 | Replay fixtures / completed | 55,456 / 55,148 |
-| Quality-assessed `ML_ELIGIBLE` fixtures | 18,767 |
-| Odds snapshots / fixtures / prices | 76 / 38 / 222,275 |
+| Quality-assessed `ML_ELIGIBLE` fixtures | 23,850 |
+| Odds snapshots / fixtures / prices | 106 / 55 / 315,960 |
 | Bookmakers / observed provider markets | 10 / 182 |
-| Feature datasets / model runs | 10 / 59 |
-| Institutional predictions / opportunities | 161 / 6,496 |
-| Shadow observations / settled | 34 / 0 |
+| Feature datasets / model runs | 13 / 71 |
+| Institutional predictions / opportunities | 207 / 8,520 |
+| Shadow observations / settled | 34 / 7 |
 
 API-Football is the sole integrated reference provider. Official documentation and the ledger show why historical match facts are far more complete than point-in-time odds, injuries, and lineups. The system now treats unavailable time-sensitive inputs as `UNKNOWN`; it does not manufacture them or spend quota attempting impossible reconstruction.
 
@@ -118,7 +118,7 @@ The report preserves model fair odds, API-Football reference odds, minimum accep
 
 Minimum acceptable odds remain model-bound and include the configured 2% base required return plus validated uncertainty adjustment when a role exists. Missing role, calibration, applicability, market-family, competition, uncertainty, margin, or risk evidence prevents production actionability. Fractional Kelly and exposure caps therefore cannot turn an unqualified signal into a recommendation.
 
-Zero settled shadow observations is an explicit empirical limitation. No ROI, drawdown, bankroll-survival, or closing-line advantage claim is made.
+Seven settled shadow observations is still an explicit empirical limitation, not a credible validation sample. No durable ROI, drawdown, bankroll-survival, or closing-line advantage claim is made.
 
 ## Operations, recovery and performance
 
@@ -168,7 +168,7 @@ It adds animated ambient depth, decision and market-family visualizations, proba
 ## Remaining limitations
 
 - Historical pre-match odds, injuries, expected lineups, and movement cannot be reconstructed when the provider did not retain or deliver them. Market evidence must accumulate prospectively.
-- Only 38 fixtures currently have odds and no shadow observation is settled. This blocks real-money approval.
+- Only 55 fixtures currently have odds and seven shadow observations are settled. This remains far too thin for real-money approval.
 - There is no active market-family champion. The qualified score model remains a research pricing core.
 - Injury/lineup features have no historical training coverage; match/player statistics are only partially covered.
 - Thirty-six thousand-plus completed replay fixtures are score-only/unassessed for detailed packages. Score models can use the results; ML detail coverage remains explicit.
@@ -201,18 +201,32 @@ Before mutation, the warehouse and associated project evidence were copied to `a
 
 ### Research ranking requested by the operator
 
-The generated HTML contains a separate `Top Research` tab and section. It selects at most one market selection per fixture, orders applicability quality before confidence, then ranks by the conservative index `model_probability - uncertainty_buffer`, and caps the list at ten. It does not rank by reference-price disagreement or expected value. The copy explicitly says that the table is research-only, is not a betting shortlist, and that the index is not a confidence interval. `PRIOR_ONLY` and out-of-domain candidates are allowed only after stronger tiers so a sparse day can still show the requested ten while preserving visible caveats.
+The generated HTML contains a separate `Top Research` tab and section governed independently from production promotion. Admission requires HIGH/MEDIUM applicability, validated calibration and competition probability scope, adequate bookmaker breadth, no extreme model–market disagreement, positive calculable reference EV, and a persisted API-Football quote at or above provisional minimum odds. Missing champion or historical market-baseline approval remains visible but does not alone suppress an otherwise qualified research row. The section selects at most one market per fixture and is never padded. Ranking is lexicographic: applicability, fewer remaining warnings, normalized price cushion above the settlement-aware minimum odds, reference EV, then model probability. It displays fair/minimum/reference odds, quote provenance, valid-observation count, the bookmaker-breadth gate, EV, robust/execution edge, minimum-odds basis, validated uncertainty state, applicability, governance, and gate reasons. A quality funnel exposes the leading blockers instead of silently returning an empty or padded table. The initial probability-minus-policy-adjustment “confidence index” was removed because the adjustment is not a probability interval and can be zero when unvalidated.
 
 ### Final acceptance evidence
 
-Offline analysis `8116e66f-d46c-47b0-ad9a-8abb1103de88` processed 12/12 fixtures for 2026-10-14, wrote 24 predictions and 1,038 prices/opportunities across score-derived families, retained reference odds for 11 fixtures, and emitted zero production or shadow labels. Its 1,079,935-byte report contains exactly ten Top Research rows and is stored at:
+Offline analysis `8116e66f-d46c-47b0-ad9a-8abb1103de88` processed 12/12 fixtures for 2026-10-14, wrote 24 predictions and 1,038 prices/opportunities across score-derived families, retained reference odds for 11 fixtures, and emitted zero production or shadow labels. Its regenerated report has a 29-column Top Research contract but correctly emits no shortlisted row: every available candidate is `PRIOR_ONLY` or `OUT_OF_DOMAIN`, so displaying ten as highly reliable would fabricate evidence. It is stored at:
 
 `artifacts/reports/2026/10/14/analysis-2026-10-14-2026-10-14-8116e66f-d46c-47b0-ad9a-8abb1103de88.html`
 
 The resulting schema-34 ledger contains 185 predictions and 7,534 opportunities: 5,181 research-only, 2,346 research-value signals, seven historical shadow-actionable observations, and zero production-actionable records. Warehouse integrity passes.
 
-Verification completed with 230 passing tests, 50 focused final regressions, clean Ruff, and strict mypy across 163 source files. The failed intermediate jobs that exposed the settlement and rollup defects remain in the operational ledger as immutable evidence; the successful final run follows them rather than erasing them.
+Latest verification completed with 233 passing tests, 22 focused report/discovery regressions, clean Ruff, and strict mypy across 163 source files. The failed intermediate jobs that exposed the settlement and rollup defects remain in the operational ledger as immutable evidence; the successful final run follows them rather than erasing them.
 
 ### Remaining boundary
 
-Append-only governance repairs auditability, not market evidence. Only 38 fixtures have prospective reference odds, there is no active champion, and the settled-shadow history remains insufficient for a real-money claim. Current API-Football retention cannot supply the missing historical point-in-time baseline. Daily prospective capture, settlement, and untouched chronological evaluation remain the correct path.
+Append-only governance repairs auditability, not market evidence. The latest ledger has prospective reference odds for 55 fixtures and seven settled shadow records, but there is no active champion and that sample is insufficient for a real-money claim. Current API-Football retention cannot supply the missing historical point-in-time baseline. Daily prospective capture, settlement, and untouched chronological evaluation remain the correct path.
+
+### Performance and operational re-audit — 2026-10-14
+
+Provider-call telemetry showed that the slowest intervals were local row-at-a-time DuckDB persistence rather than API-Football latency. The audited implementation now checkpoints an unchanged competition catalog by content hash, writes match components and the observed market taxonomy through typed set-based relations, and emits explicit continuous-learning train/evaluate timings. It also distinguishes candidates withheld in the current learning run from the complete historical promotion pool and reports research-price/value-signal counts plus odds snapshots outside the analysis scope.
+
+Measured on real persisted evidence, a repeated unchanged 1,241-row catalog write fell from 33.62 seconds to 0.0128 seconds after the checkpoint was seeded; 13 observed-market refreshes fell from 11.16 seconds to 0.96 seconds; and a 20-fixture detail page persisted 1,988 component rows in 2.92 seconds. Page-level transactions still bind persistence and checkpoint advancement atomically. The full suite, lint, typing, migrations, and warehouse integrity were rerun after these changes.
+
+The pre-final-acceptance read-only warehouse audit reported 1,443 competition-seasons, 60,815 completed fixtures, 106 odds snapshots over 55 fixtures, 197 institutional predictions, 8,053 opportunities, seven settled shadow records, and zero production-actionable rows. The later artifact-reconciliation run below appended analysis evidence but did not change the research-and-shadow classification.
+
+### Final artifact reconciliation — 2026-10-14
+
+Before the final offline principal acceptance appended new analysis evidence, a schema-34 backup was created and independently verified at `artifacts/backups/2026-10-14-pre-final-offline-acceptance/backup_manifest.json` (14,719 files and nine critical table counts). Offline analysis `ec603dc8-13c4-4431-aec7-eb3a4e51b017` then completed 12/12 requested fixtures without provider calls, persisted ten predictions and 467 prices/opportunities (135 research value signals), and emitted zero shadow or production candidates. The fresh 934,172-character HTML contains the evidence-qualified Top Research contract, quality funnel, full Market Board, no-padding statement, and manual-price caveat. Direct SQL reconciled the exact analysis row and opportunity states, and post-run warehouse integrity passed.
+
+The resulting live ledger contains 207 institutional predictions and 8,520 opportunities: 5,894 research-only, 2,619 research-value signals, seven historical shadow-actionable records, and zero production-actionable records. This final artifact regeneration fixed a documentation/artifact drift where earlier HTML files predated the quality-funnel template; it did not alter model, pricing, or actionability policy.

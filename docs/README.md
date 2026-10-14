@@ -17,6 +17,9 @@ access, or schema versions change.
   closed findings. Open evidence deficits remain actionability blockers.
 - [`research/INSTITUTIONAL_IMPROVEMENT_RESEARCH.md`](research/INSTITUTIONAL_IMPROVEMENT_RESEARCH.md):
   provider constraints and research decisions that govern future changes.
+- [`prompts/PREDICTION_PATH_CODEX_PROMPT.md`](prompts/PREDICTION_PATH_CODEX_PROMPT.md):
+  reusable Codex prompt for focused, iterative prediction-quality research and
+  improvement runs.
 - [`../AGENTS.md`](../AGENTS.md): non-negotiable repository guardrails.
 
 ## Historical evidence

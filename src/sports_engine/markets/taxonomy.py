@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 import duckdb
+import polars as pl
 
 
 class MarketState(StrEnum):
@@ -107,12 +108,27 @@ def persist_observed_api_football_markets(connection: duckdb.DuckDBPyConnection)
             ]
         )
     if rows:
-        connection.executemany(
-            "INSERT INTO canonical_market_mappings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (provider, provider_market_id) DO UPDATE SET "
-            "provider_market_name=excluded.provider_market_name, canonical_market=excluded.canonical_market, "
-            "market_family=excluded.market_family, state=excluded.state, "
-            "settlement_version=excluded.settlement_version, last_seen_at=excluded.last_seen_at",
-            rows,
-        )
+        columns = [
+            "provider",
+            "provider_market_id",
+            "provider_market_name",
+            "canonical_market",
+            "market_family",
+            "state",
+            "settlement_version",
+            "first_seen_at",
+            "last_seen_at",
+        ]
+        frame = pl.DataFrame(rows, schema=columns, orient="row", infer_schema_length=None)
+        connection.register("_incoming_market_mappings", frame)
+        try:
+            connection.execute(
+                "INSERT INTO canonical_market_mappings SELECT * FROM _incoming_market_mappings "
+                "ON CONFLICT (provider, provider_market_id) DO UPDATE SET "
+                "provider_market_name=excluded.provider_market_name, canonical_market=excluded.canonical_market, "
+                "market_family=excluded.market_family, state=excluded.state, "
+                "settlement_version=excluded.settlement_version, last_seen_at=excluded.last_seen_at",
+            )
+        finally:
+            connection.unregister("_incoming_market_mappings")
     return len(rows)

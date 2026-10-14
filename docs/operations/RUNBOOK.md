@@ -95,10 +95,20 @@ production opportunity must be validated against the latest role event and suppo
 that existed at or before its creation time. Before any production-ledger migration, create and
 verify a backup; a faithful backup may correctly preserve known integrity findings from the source.
 
-The HTML `Top Research` table is informational. It orders applicability tier before the conservative
-`model probability - uncertainty buffer` index and keeps one selection per fixture, capped at ten.
-Do not interpret this section as expected value, a confidence interval, operator odds, or permission
-to place a bet. Inspect its applicability label and the full audit row before using it in research.
+The HTML `Top Research` table uses an independent research-shortlist policy: HIGH/MEDIUM
+applicability, validated calibration and competition probability scope, adequate bookmaker breadth,
+no extreme model–market disagreement, positive calculable reference EV, and a persisted API-Football quote
+at or above provisional minimum odds. It does not require a production champion or historical market
+baseline merely to display a research shortlist. It keeps one selection per fixture, capped at ten,
+and is not padded with prior-only or out-of-domain rows. Ranking is lexicographic: applicability tier,
+number of remaining evidence warnings, normalized price cushion above minimum acceptable odds,
+API-reference expected return, then model selection probability. It displays fair/minimum/reference
+odds, quote time and age, valid observation count, bookmaker-breadth gate outcome, movement,
+dispersion, EV, minimum-odds policy basis, validated uncertainty adjustment,
+applicability, governance and every gate reason. Model probability is not a confidence interval;
+API-reference EV is not guaranteed executable EV. Recheck the bookmaker price before any use.
+The quality funnel reports how many price rows passed every shortlist gate and the leading row-level
+blockers. It is an evidence-accumulation diagnostic, not permission to weaken a gate to fill ten rows.
 
 ## Generated-file cleanup
 

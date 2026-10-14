@@ -59,7 +59,7 @@ The current fundamental board supports seven selections per analyzed fixture: ho
 
 ## Current operating status
 
-**`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`** (verified 2026-10-13,
+**`RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`** (verified 2026-10-14,
 Africa/Nairobi).
 
 The engine currently produces research probabilities and fair prices, but no
@@ -617,7 +617,7 @@ Development uses an explicitly configured replay season and labels its rows `rep
 
 ## Reports and artifacts
 
-Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation. The `Top Research` view shows at most ten selections, one per fixture, ordered first by applicability quality and then by the conservative index `model probability - uncertainty buffer`. It is a probability-research summary, not a betting/value ranking or confidence interval; prior-only and out-of-domain rows remain visibly labelled. New model and evaluation artifacts use the same `YYYY/MM/DD` partition beneath their category; registry paths and recursive discovery retain compatibility with older flat artifacts.
+Principal reports are written to `artifacts/reports/YYYY/MM/DD/analysis-*.html` and include the full-universe audit, football probabilities, fair odds, minimum acceptable odds, latest references, provenance, per-selection age and movement, reference/robust edge, unknown execution edge, decisions, and model/data/quota health. A prominent notice always requires manual price confirmation. The `Top Research` view shows at most ten selections, one per fixture. Its independent research-shortlist policy requires HIGH/MEDIUM applicability, validated calibration and competition probability scope, adequate bookmaker breadth, no extreme model–market disagreement, positive calculable reference EV, and a persisted API-Football quote at or above provisional minimum odds. A missing production champion or historical market baseline does not alone suppress this shortlist. Ranking is lexicographic and auditable: applicability quality, fewer remaining evidence warnings, normalized price cushion above minimum acceptable odds, reference expected return, then model probability. The table exposes quote time/age, valid observation count, the bookmaker-breadth gate, movement, dispersion, fair/minimum/reference odds, EV, minimum-odds basis, validated uncertainty state, applicability, governance, and gate reasons. A quality funnel shows why rows failed rather than padding the list with prior-only or out-of-domain guesses. The report does not invent a weighted reliability score or executable price. New model and evaluation artifacts use the same `YYYY/MM/DD` partition beneath their category; registry paths and recursive discovery retain compatibility with older flat artifacts.
 
 | Path | Contents |
 |---|---|

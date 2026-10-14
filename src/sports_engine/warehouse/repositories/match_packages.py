@@ -1,8 +1,10 @@
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 import duckdb
+import polars as pl
 
 from sports_engine.core.ids import canonical_id
 from sports_engine.sports.football.normalization.events import normalize_events
@@ -43,39 +45,40 @@ def persist_match_package(
     return fixture_id
 
 
-def _ensure_player(
+def _bulk_insert(
     connection: duckdb.DuckDBPyConnection,
-    provider_player_id: int,
-    name: str,
+    relation_name: str,
+    columns: list[str],
+    rows: Sequence[Sequence[object]],
+    statement: str,
+) -> None:
+    """Write a normalized match component with one DuckDB columnar scan."""
+    if not rows:
+        return
+    frame = pl.DataFrame(rows, schema=columns, orient="row", infer_schema_length=None)
+    connection.register(relation_name, frame)
+    try:
+        connection.execute(statement)
+    finally:
+        connection.unregister(relation_name)
+
+
+def _bulk_upsert_players(
+    connection: duckdb.DuckDBPyConnection,
+    players: dict[object, str],
     source_raw_path: str,
     observed: datetime,
-) -> object:
-    player_id = canonical_id("player", "api_football", provider_player_id)
-    connection.execute(
+) -> None:
+    _bulk_insert(
+        connection,
+        "_incoming_match_players",
+        ["player_id", "name", "updated_at", "source_raw_path", "retrieved_at"],
+        [[str(player_id), name, observed, source_raw_path, observed] for player_id, name in players.items()],
         "INSERT INTO players (player_id, name, updated_at, source_raw_path, retrieved_at) "
-        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (player_id) DO UPDATE SET name=excluded.name, "
-        "updated_at=excluded.updated_at, source_raw_path=excluded.source_raw_path, retrieved_at=excluded.retrieved_at",
-        [player_id, name, observed, source_raw_path, observed],
-    )
-    return player_id
-
-
-def _ensure_team(
-    connection: duckdb.DuckDBPyConnection,
-    provider_team_id: int,
-    name: str,
-    source_raw_path: str,
-    observed: datetime,
-) -> object:
-    team_id = canonical_id("team", "api_football", provider_team_id)
-    connection.execute(
-        "INSERT INTO teams (team_id, name, updated_at, source_raw_path, retrieved_at) "
-        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (team_id) DO UPDATE SET "
+        "SELECT * FROM _incoming_match_players ON CONFLICT (player_id) DO UPDATE SET "
         "name=excluded.name, updated_at=excluded.updated_at, "
         "source_raw_path=excluded.source_raw_path, retrieved_at=excluded.retrieved_at",
-        [team_id, name, observed, source_raw_path, observed],
     )
-    return team_id
 
 
 def _replace_events(
@@ -87,20 +90,17 @@ def _replace_events(
     observed: datetime,
 ) -> None:
     connection.execute("DELETE FROM fixture_events WHERE fixture_id=?", [fixture_id])
+    players: dict[object, str] = {}
     for payload in payloads:
         for key in ("player", "assist"):
             player = payload.get(key) or {}
             if player.get("id") is not None:
-                _ensure_player(
-                    connection,
-                    int(player["id"]),
-                    str(player.get("name") or f"Player {player['id']}"),
-                    source_raw_path,
-                    observed,
-                )
+                player_id = canonical_id("player", "api_football", int(player["id"]))
+                players[player_id] = str(player.get("name") or f"Player {player['id']}")
+    _bulk_upsert_players(connection, players, source_raw_path, observed)
+    rows = []
     for event in normalize_events(provider_fixture_id, payloads):
-        connection.execute(
-            "INSERT INTO fixture_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows.append(
             [
                 event["event_id"],
                 event["fixture_id"],
@@ -116,8 +116,19 @@ def _replace_events(
                 json.dumps(event["source_payload"]),
                 source_raw_path,
                 observed,
-            ],
+            ]
         )
+    _bulk_insert(
+        connection,
+        "_incoming_fixture_events",
+        [
+            "event_id", "fixture_id", "team_id", "player_id", "assist_player_id", "elapsed", "extra",
+            "event_type", "detail", "comments", "provider_sequence", "source_payload", "source_raw_path",
+            "retrieved_at",
+        ],
+        [[str(value) if index < 5 and value is not None else value for index, value in enumerate(row)] for row in rows],
+        "INSERT INTO fixture_events SELECT * FROM _incoming_fixture_events",
+    )
 
 
 def _replace_lineups(
@@ -131,6 +142,11 @@ def _replace_lineups(
         "DELETE FROM lineup_players WHERE lineup_id IN (SELECT lineup_id FROM lineups WHERE fixture_id=?)",
         [fixture_id],
     )
+    coaches: dict[object, list[object]] = {}
+    lineups: list[list[object]] = []
+    observations: list[list[object]] = []
+    players: dict[object, str] = {}
+    lineup_players: list[list[object]] = []
     for payload in payloads:
         record = normalize_lineup(payload)
         team_id = canonical_id("team", "api_football", record.provider_team_id)
@@ -138,40 +154,19 @@ def _replace_lineups(
         coach_id = None
         if record.provider_coach_id is not None:
             coach_id = canonical_id("coach", "api_football", record.provider_coach_id)
-            connection.execute(
-                "INSERT INTO coaches VALUES (?, ?, NULL, ?) ON CONFLICT (coach_id) DO UPDATE SET "
-                "name=excluded.name, updated_at=excluded.updated_at",
-                [coach_id, record.coach_name or f"Coach {record.provider_coach_id}", observed],
-            )
-        connection.execute(
-            "INSERT INTO lineups VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lineup_id) DO NOTHING",
-            [
-                lineup_id,
-                fixture_id,
-                team_id,
-                coach_id,
-                record.formation,
-                json.dumps(record.source_payload),
-                source_raw_path,
-                observed,
-            ],
+            coaches[coach_id] = [str(coach_id), record.coach_name or f"Coach {record.provider_coach_id}", observed]
+        lineups.append(
+            [str(lineup_id), fixture_id, str(team_id), str(coach_id) if coach_id else None, record.formation,
+             json.dumps(record.source_payload), source_raw_path, observed]
         )
         observation_id = canonical_id(
             "lineup_observation",
             "api_football",
             f"{lineup_id}:{observed.isoformat()}:{source_raw_path}",
         )
-        connection.execute(
-            "INSERT INTO lineup_observations VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                observation_id,
-                lineup_id,
-                observed,
-                coach_id,
-                record.formation,
-                json.dumps(record.source_payload),
-                source_raw_path,
-            ],
+        observations.append(
+            [str(observation_id), str(lineup_id), observed, str(coach_id) if coach_id else None,
+             record.formation, json.dumps(record.source_payload), source_raw_path]
         )
         seen_lineup_players: set[tuple[object, str]] = set()
         for player in record.players:
@@ -179,11 +174,36 @@ def _replace_lineups(
             if player_key in seen_lineup_players:
                 continue
             seen_lineup_players.add(player_key)
-            player_id = _ensure_player(connection, player.provider_player_id, player.name, source_raw_path, observed)
-            connection.execute(
-                "INSERT INTO lineup_players VALUES (?, ?, ?, ?, ?, ?)",
-                [lineup_id, player_id, player.number, player.position, player.grid, player.role],
+            player_id = canonical_id("player", "api_football", player.provider_player_id)
+            players[player_id] = player.name
+            lineup_players.append(
+                [str(lineup_id), str(player_id), player.number, player.position, player.grid, player.role]
             )
+    _bulk_insert(
+        connection, "_incoming_coaches", ["coach_id", "name", "updated_at"], list(coaches.values()),
+        "INSERT INTO coaches (coach_id, name, nationality, updated_at) "
+        "SELECT coach_id, name, NULL, updated_at FROM _incoming_coaches "
+        "ON CONFLICT (coach_id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at",
+    )
+    _bulk_insert(
+        connection, "_incoming_lineups",
+        [
+            "lineup_id", "fixture_id", "team_id", "coach_id", "formation", "source_payload", "source_raw_path",
+            "retrieved_at",
+        ],
+        lineups, "INSERT INTO lineups SELECT * FROM _incoming_lineups ON CONFLICT (lineup_id) DO NOTHING",
+    )
+    _bulk_insert(
+        connection, "_incoming_lineup_observations",
+        ["observation_id", "lineup_id", "observed_at", "coach_id", "formation", "source_payload", "source_raw_path"],
+        observations, "INSERT INTO lineup_observations SELECT * FROM _incoming_lineup_observations",
+    )
+    _bulk_upsert_players(connection, players, source_raw_path, observed)
+    _bulk_insert(
+        connection, "_incoming_lineup_players",
+        ["lineup_id", "player_id", "squad_number", "position", "grid", "role"],
+        lineup_players, "INSERT INTO lineup_players SELECT * FROM _incoming_lineup_players",
+    )
 
 
 def _replace_team_statistics(
@@ -194,20 +214,24 @@ def _replace_team_statistics(
     observed: datetime,
 ) -> None:
     connection.execute("DELETE FROM team_match_statistics WHERE fixture_id=?", [fixture_id])
+    rows = []
     for payload in payloads:
         record = normalize_team_statistics(payload)
         values = record.model_dump()
-        connection.execute(
-            "INSERT INTO team_match_statistics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows.append(
             [
                 fixture_id,
-                canonical_id("team", "api_football", record.provider_team_id),
+                str(canonical_id("team", "api_football", record.provider_team_id)),
                 *(values[field] for field in list(values)[1:-1]),
                 json.dumps(record.additional_stats),
                 source_raw_path,
                 observed,
-            ],
+            ]
         )
+    _bulk_insert(
+        connection, "_incoming_team_match_statistics", [f"column_{index}" for index in range(21)], rows,
+        "INSERT INTO team_match_statistics SELECT * FROM _incoming_team_match_statistics",
+    )
 
 
 def _nested(stats: dict[str, Any], group: str, field: str) -> Any:
@@ -224,26 +248,23 @@ def _replace_player_statistics(
 ) -> None:
     connection.execute("DELETE FROM player_match_statistics WHERE fixture_id=?", [fixture_id])
     seen_player_statistics: set[tuple[int, int]] = set()
+    teams: dict[object, str] = {}
+    players: dict[object, str] = {}
+    rows: list[list[object]] = []
     for team_payload in payloads:
         team = team_payload.get("team") or {}
         if not isinstance(team, dict) or team.get("id") is None:
             continue
-        team_id = _ensure_team(
-            connection,
-            int(team["id"]),
-            str(team.get("name") or f"Team {team['id']}"),
-            source_raw_path,
-            observed,
-        )
+        team_id = canonical_id("team", "api_football", int(team["id"]))
+        teams[team_id] = str(team.get("name") or f"Team {team['id']}")
         for record in normalize_player_statistics(team_payload):
             record_key = (record.provider_team_id, record.provider_player_id)
             if record_key in seen_player_statistics:
                 continue
             seen_player_statistics.add(record_key)
             stats = record.statistics
-            player_id = _ensure_player(
-                connection, record.provider_player_id, record.player_name, source_raw_path, observed
-            )
+            player_id = canonical_id("player", "api_football", record.provider_player_id)
+            players[player_id] = record.player_name
             fields = [
                 ("games", "minutes"),
                 ("games", "number"),
@@ -278,18 +299,31 @@ def _replace_player_statistics(
                 ("penalty", "missed"),
                 ("penalty", "saved"),
             ]
-            connection.execute(
-                "INSERT INTO player_match_statistics VALUES (" + ",".join("?" for _ in range(38)) + ")",
+            rows.append(
                 [
                     fixture_id,
-                    team_id,
-                    player_id,
+                    str(team_id),
+                    str(player_id),
                     *(_nested(stats, group, field) for group, field in fields),
                     json.dumps(stats),
                     source_raw_path,
                     observed,
-                ],
+                ]
             )
+    _bulk_insert(
+        connection, "_incoming_match_teams",
+        ["team_id", "name", "updated_at", "source_raw_path", "retrieved_at"],
+        [[str(team_id), name, observed, source_raw_path, observed] for team_id, name in teams.items()],
+        "INSERT INTO teams (team_id, name, updated_at, source_raw_path, retrieved_at) "
+        "SELECT * FROM _incoming_match_teams ON CONFLICT (team_id) DO UPDATE SET "
+        "name=excluded.name, updated_at=excluded.updated_at, "
+        "source_raw_path=excluded.source_raw_path, retrieved_at=excluded.retrieved_at",
+    )
+    _bulk_upsert_players(connection, players, source_raw_path, observed)
+    _bulk_insert(
+        connection, "_incoming_player_match_statistics", [f"column_{index}" for index in range(38)], rows,
+        "INSERT INTO player_match_statistics SELECT * FROM _incoming_player_match_statistics",
+    )
 
 
 def _replace_completeness(
@@ -300,8 +334,12 @@ def _replace_completeness(
     observed: datetime,
 ) -> None:
     connection.execute("DELETE FROM fixture_completeness WHERE fixture_id=?", [fixture_id])
-    for component, state in assessment.components.items():
-        connection.execute(
-            "INSERT INTO fixture_completeness VALUES (?, ?, ?, ?, ?, ?)",
-            [fixture_id, component, state.value, None, observed, source_raw_path],
-        )
+    rows = [
+        [fixture_id, component, state.value, None, observed, source_raw_path]
+        for component, state in assessment.components.items()
+    ]
+    _bulk_insert(
+        connection, "_incoming_fixture_completeness",
+        ["fixture_id", "component", "state", "reason", "assessed_at", "source_raw_path"], rows,
+        "INSERT INTO fixture_completeness SELECT * FROM _incoming_fixture_completeness",
+    )

@@ -188,7 +188,14 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
 def test_html_ranks_one_in_domain_research_selection_per_fixture(tmp_path: Path) -> None:
     now = datetime(2026, 10, 8, 9, tzinfo=UTC)
 
-    def row(fixture: str, market: str, probability: float, level: str) -> OpportunityRow:
+    def row(
+        fixture: str,
+        market: str,
+        probability: float,
+        level: str,
+        reference_odds: float = 2.10,
+        reasons: tuple[str, ...] = ("RESEARCH_ONLY_NOT_ACTIONABLE",),
+    ) -> OpportunityRow:
         return OpportunityRow(
             rank=1,
             competition="League",
@@ -199,17 +206,21 @@ def test_html_ranks_one_in_domain_research_selection_per_fixture(tmp_path: Path)
             model_probability=probability,
             model_fair_odds=1 / probability,
             minimum_odds=1 / probability + 0.1,
-            reference_odds=None,
-            bookmaker=None,
-            reference_observed_at=None,
-            reference_age_minutes=None,
-            market_probability=None,
-            reference_edge=None,
-            robust_edge=None,
-            reference_expected_return=None,
+            reference_odds=reference_odds,
+            bookmaker="Reference Book",
+            reference_observed_at=now,
+            reference_age_minutes=12.0,
+            market_probability=0.48,
+            reference_edge=0.22,
+            robust_edge=0.17,
+            reference_expected_return=0.47,
             uncertainty=0.05,
-            reference_state="NO_REFERENCE_ODDS",
+            reference_state="LATEST_PROVIDER_REFERENCE",
             decision="RESEARCH_ONLY",
+            snapshot_count=4,
+            price_movement=0.08,
+            bookmaker_dispersion=0.04,
+            reasons=reasons,
             applicability_state="FULLY_ESTIMATED" if level == "HIGH" else "PARTIALLY_POOLED",
             applicability_level=level,
         )
@@ -221,10 +232,13 @@ def test_html_ranks_one_in_domain_research_selection_per_fixture(tmp_path: Path)
             now,
             (),
             price_targets=(
-                row("A v B", "MATCH_ODDS", 0.70, "HIGH"),
-                row("A v B", "TOTAL_GOALS 2.5", 0.80, "HIGH"),
+                row("A v B", "MATCH_ODDS", 0.70, "HIGH", 2.10),
+                row("A v B", "TOTAL_GOALS 2.5", 0.80, "HIGH", 1.50),
                 row("C v D", "MATCH_ODDS", 0.90, "OUT_OF_DOMAIN"),
                 row("E v F", "MATCH_ODDS", 0.65, "MEDIUM"),
+                row("G v H", "MATCH_ODDS", 0.70, "HIGH", 1.01),
+                row("I v J", "MATCH_ODDS", 0.95, "HIGH", reasons=("AGED_REFERENCE_RECHECK_REQUIRED",)),
+                row("K v L", "MATCH_ODDS", 0.60, "HIGH"),
             ),
         ),
         tmp_path / "report.html",
@@ -232,9 +246,92 @@ def test_html_ranks_one_in_domain_research_selection_per_fixture(tmp_path: Path)
 
     document = path.read_text(encoding="utf-8")
     section = document.split('<section id="research"', 1)[1].split("</section>", 1)[0]
-    assert "Top 10 research predictions by confidence" in section
+    assert "Top 10 evidence-qualified research selections" in section
     assert section.count("A v B") == 1
-    assert "TOTAL_GOALS 2.5" in section
+    assert "MATCH_ODDS" in section
     assert "E v F" in section
-    assert "C v D" in section
-    assert "not a confidence interval" in section
+    assert "C v D" not in section
+    assert "G v H" not in section
+    assert section.index("K v L") < section.index("I v J")
+    assert "not a guarantee or statistical confidence interval" in section
+    assert "Fair odds" in section
+    assert "Minimum odds" in section
+    assert "Expected return @ API ref" in section
+    assert "Execution edge" in section
+    assert "Minimum-odds test" in section
+    assert "Price cushion" in section
+    assert "Minimum-odds basis" in section
+    assert "Bookmaker-breadth gate" in section
+    assert "Shortlist evidence warnings" in section
+    assert "Validated uncertainty adjustment" in section
+    assert "Reference observed" in section
+    assert "Valid observations" in section
+    assert "Movement" in section
+    assert "Dispersion" in section
+    assert "Reference Book" in section
+    assert "+47.0%" in section
+    assert ">PASS<" in section
+    assert "RESEARCH_ONLY_NOT_ACTIONABLE" in section
+    assert "AGED_REFERENCE_RECHECK_REQUIRED" in section
+    assert "NO_SHORTLIST_WARNING" in section
+    assert "Quality funnel:" in section
+    assert "Leading row-level blockers:" in section
+    assert "not guaranteed executable EV" in section
+    assert "If fewer than ten qualify, the table is not padded" in section
+
+
+def test_html_research_shortlist_rejects_missing_evidence(tmp_path: Path) -> None:
+    now = datetime(2026, 10, 8, 9, tzinfo=UTC)
+
+    def candidate(fixture: str, level: str, reasons: tuple[str, ...]) -> OpportunityRow:
+        return OpportunityRow(
+            rank=1,
+            competition="League",
+            kickoff=now,
+            fixture=fixture,
+            market="MATCH_ODDS",
+            selection="HOME",
+            model_probability=0.60,
+            model_fair_odds=1.67,
+            minimum_odds=1.75,
+            reference_odds=2.00,
+            bookmaker="Reference Book",
+            reference_observed_at=now,
+            reference_age_minutes=5.0,
+            market_probability=0.50,
+            reference_edge=0.10,
+            robust_edge=None,
+            reference_expected_return=0.20,
+            uncertainty=0.0,
+            reference_state="LATEST_PROVIDER_REFERENCE",
+            decision="RESEARCH_VALUE_SIGNAL",
+            snapshot_count=3,
+            reasons=reasons,
+            applicability_state="PARTIALLY_POOLED" if level == "MEDIUM" else level,
+            applicability_level=level,
+        )
+
+    path = render_daily_analysis(
+        DailyAnalysisReport(
+            now.date(),
+            now.date(),
+            now,
+            (),
+            price_targets=(
+                candidate("Eligible", "MEDIUM", ("NO_MARKET_FAMILY_CHAMPION",)),
+                candidate("Prior", "PRIOR_ONLY", ()),
+                candidate("Uncalibrated", "HIGH", ("CALIBRATION_NOT_VALIDATED",)),
+                candidate("Thin book", "HIGH", ("INSUFFICIENT_REFERENCE_BOOKMAKER_BREADTH",)),
+                candidate("Prior leak", "HIGH", ("GLOBAL_PRIOR_SUBSTITUTION",)),
+            ),
+        ),
+        tmp_path / "report.html",
+    )
+    section = path.read_text(encoding="utf-8").split('<section id="research"', 1)[1].split("</section>", 1)[0]
+    assert "Eligible" in section
+    assert "Prior" not in section
+    assert "Uncalibrated" not in section
+    assert "Thin book" not in section
+    assert "Prior leak" not in section
+    assert "WEAK_FIXTURE_APPLICABILITY" in section
+    assert "CALIBRATION_NOT_VALIDATED" in section

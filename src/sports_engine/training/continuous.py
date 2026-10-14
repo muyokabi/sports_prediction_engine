@@ -1,3 +1,5 @@
+import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +18,7 @@ from sports_engine.training.trainer import ModelTrainer, TrainingResult
 STATISTICAL_MODEL_TYPES = ("elo", "poisson", "dixon-coles")
 ML_MODEL_TYPES = ("logistic", "catboost", "lightgbm")
 CONTINUOUS_MODEL_TYPES = (*STATISTICAL_MODEL_TYPES, *ML_MODEL_TYPES)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,11 +111,33 @@ def run_due_ml_updates(
     withheld: list[str] = []
     errors: list[str] = []
     for decision in due:
+        started = time.perf_counter()
+        logger.info(
+            "continuous_learning model_update_start model_type=%s mode=%s eligible_observations=%s",
+            decision.model_type,
+            decision.mode,
+            eligible,
+        )
         try:
             result = _train_due_candidate(trainer, decision, dataset_name)
             trained.append(result.version)
+            trained_at = time.perf_counter()
+            logger.info(
+                "continuous_learning model_training_complete model_type=%s version=%s elapsed_seconds=%.1f",
+                decision.model_type,
+                result.version,
+                trained_at - started,
+            )
             report = evaluator.evaluate(decision.model_type, dataset_name=dataset_name)
             evaluations.append(report.path)
+            logger.info(
+                "continuous_learning model_evaluation_complete model_type=%s version=%s "
+                "evaluation_seconds=%.1f total_seconds=%.1f",
+                decision.model_type,
+                result.version,
+                time.perf_counter() - trained_at,
+                time.perf_counter() - started,
+            )
             # A failed evidence gate is a deterministic rejection. All other
             # candidates remain withheld; numerical rank alone cannot promote.
             if result.evidence_state == EvidenceState.INSUFFICIENT_DATA:
@@ -121,6 +146,11 @@ def run_due_ml_updates(
                 withheld.append(result.version)
         except (OSError, RuntimeError, ValueError) as exc:
             errors.append(f"{decision.model_type}: {exc}")
+            logger.exception(
+                "continuous_learning model_update_failed model_type=%s elapsed_seconds=%.1f",
+                decision.model_type,
+                time.perf_counter() - started,
+            )
     promotion = run_automated_promotion(connection, config, now=observed)
     promoted = set(promotion.promoted_versions)
     all_withheld = tuple(dict.fromkeys([*withheld, *promotion.withheld_versions]))

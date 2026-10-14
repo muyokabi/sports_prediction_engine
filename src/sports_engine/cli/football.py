@@ -783,7 +783,9 @@ def daily(
         f" settled_predictions={settlement_result.predictions_settled}"
         f" settled_shadow={shadow_settlement_result.opportunities_settled}"
         f" ml_due={len(learning.due_models)} ml_trained={len(learning.trained_versions)}"
-        f" ml_promoted={len(learning.promoted_versions)} ml_withheld={len(learning.withheld_versions)}"
+        f" ml_promoted={len(learning.promoted_versions)}"
+        f" ml_newly_withheld={len(set(learning.trained_versions) & set(learning.withheld_versions))}"
+        f" promotion_pool_withheld={len(learning.withheld_versions)}"
     )
     return learning
 
