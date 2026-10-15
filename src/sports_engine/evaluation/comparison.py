@@ -44,7 +44,7 @@ def compare_evaluation_reports(
     """
     if len(report_paths) < 2:
         raise ValueError("At least two evaluation reports are required")
-    loaded = [_load_report(path) for path in report_paths]
+    loaded = [load_evaluation_report(path) for path in report_paths]
     dataset_hashes = {item["payload"].get("dataset_hash") for item in loaded}
     if len(dataset_hashes) != 1:
         raise ValueError("Evaluation reports must use the same dataset hash")
@@ -185,7 +185,7 @@ def compare_evaluation_reports(
     return path
 
 
-def _load_report(path: Path) -> dict[str, Any]:
+def load_evaluation_report(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     artifact = payload.get("prediction_artifact")
     if not isinstance(artifact, dict) or not artifact.get("path") or not artifact.get("sha256"):

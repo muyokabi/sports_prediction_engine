@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -306,6 +307,61 @@ def evaluate_score_calibration(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
     typer.echo(f"score-calibration={path}")
+
+
+@app.command("evaluate-ml-score-fusion")
+def evaluate_ml_score_fusion_command(
+    score_report: Path,
+    ml_report: Path,
+) -> None:
+    """Evaluate coherent ML adjustment of a score model; never promote it."""
+    from sports_engine.core.config import load_config
+    from sports_engine.evaluation.ml_score_fusion import evaluate_ml_score_fusion
+
+    config = load_config()
+    try:
+        path = evaluate_ml_score_fusion(
+            score_report,
+            ml_report,
+            config.artifacts_dir / "evaluation" / "fusion",
+            random_seed=config.models.random_seed,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(f"ml-score-fusion={path}")
+
+
+@app.command("evaluate-ml-family-specialist")
+def evaluate_ml_family_specialist_command(
+    ml_report: Path,
+    score_report: Annotated[
+        Path | None,
+        typer.Option(help="Optional aligned score-model report for paired BTTS/totals comparison."),
+    ] = None,
+) -> None:
+    """Evaluate direct BTTS and totals ML specialists; never promote them."""
+    from sports_engine.core.config import load_config
+    from sports_engine.evaluation.family_specialists import evaluate_ml_family_specialist
+    from sports_engine.warehouse.connection import connect
+
+    config = load_config()
+    connection = connect(config.database_path, read_only=True)
+    try:
+        path = evaluate_ml_family_specialist(
+            connection,
+            ml_report,
+            config.artifacts_dir / "evaluation" / "family-specialists",
+            random_seed=config.models.random_seed,
+            cpu_threads=config.models.cpu_threads,
+            score_report=score_report,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        connection.close()
+    typer.echo(f"ml-family-specialist={path}")
 
 
 @app.command("evaluate-competition-calibration")

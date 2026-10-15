@@ -165,7 +165,9 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
         section in document
         for section in (
             "Overview",
-            "Top research",
+            "Top forecasts",
+            "Research basket",
+            "Validated research",
             "Top opportunities",
             "All matches",
             "Market board",
@@ -183,6 +185,95 @@ def test_html_report_escapes_content_and_lists_full_universe(tmp_path: Path) -> 
     assert "filterMarket" in document
     assert "prefers-reduced-motion" in document
     assert "Football intelligence" in document
+
+
+def test_html_exposes_forecasts_and_equal_stake_learning_basket(tmp_path: Path) -> None:
+    now = datetime(2026, 10, 14, 9, tzinfo=UTC)
+
+    def row(
+        fixture: str,
+        selection: str,
+        probability: float,
+        odds: float,
+        expected_return: float,
+        reasons: tuple[str, ...],
+        *,
+        level: str = "MEDIUM",
+    ) -> OpportunityRow:
+        fair_odds = 1 / probability
+        return OpportunityRow(
+            rank=1,
+            competition="Learning League",
+            kickoff=now,
+            fixture=fixture,
+            market="MATCH_ODDS",
+            selection=selection,
+            model_probability=probability,
+            model_fair_odds=fair_odds,
+            minimum_odds=fair_odds * 1.05,
+            reference_odds=odds,
+            bookmaker="Reference Book",
+            reference_observed_at=now,
+            reference_age_minutes=10.0,
+            market_probability=1 / odds,
+            reference_edge=probability - 1 / odds,
+            robust_edge=None,
+            reference_expected_return=expected_return,
+            uncertainty=0.0,
+            reference_state="LATEST_PROVIDER_REFERENCE",
+            decision="RESEARCH_VALUE_SIGNAL",
+            snapshot_count=3,
+            reasons=reasons,
+            applicability_state="PARTIALLY_POOLED",
+            applicability_level=level,
+        )
+
+    path = render_daily_analysis(
+        DailyAnalysisReport(
+            now.date(),
+            now.date(),
+            now,
+            (),
+            price_targets=(
+                row(
+                    "A v B",
+                    "HOME",
+                    0.30,
+                    4.20,
+                    0.26,
+                    ("COMPETITION_PROBABILITY_NOT_VALIDATED", "NO_MARKET_FAMILY_CHAMPION"),
+                ),
+                row("A v B", "AWAY", 0.45, 2.60, 0.17, ("COMPETITION_PROBABILITY_NOT_VALIDATED",)),
+                row("C v D", "AWAY", 0.40, 3.00, 0.20, ("COMPETITION_PROBABILITY_NOT_VALIDATED",)),
+                row(
+                    "E v F",
+                    "HOME",
+                    0.42,
+                    3.10,
+                    0.30,
+                    ("CALIBRATION_NOT_VALIDATED", "COMPETITION_PROBABILITY_NOT_VALIDATED"),
+                ),
+                row("Prior v Unknown", "HOME", 0.60, 2.00, 0.20, ("PRIOR_ONLY",), level="PRIOR_ONLY"),
+            ),
+        ),
+        tmp_path / "report.html",
+    )
+
+    document = path.read_text(encoding="utf-8")
+    forecasts = document.split('<section id="forecasts"', 1)[1].split("</section>", 1)[0]
+    basket = document.split('<section id="basket"', 1)[1].split("</section>", 1)[0]
+
+    assert "A v B" in forecasts and "C v D" in forecasts and "E v F" in forecasts
+    assert "Prior v Unknown" not in forecasts
+    assert "A v B" in basket and basket.count("A v B") == 1
+    assert "C v D" in basket
+    assert "E v F" not in basket
+    assert basket.index("A v B") < basket.index("C v D")
+    assert "Competition-scope validation may remain unresolved" in basket
+    assert "4.0 winner covers a three-selection basket with profit" in basket
+    assert "Equal-stake selections</span><span class=\"value\">2" in basket
+    assert "Model expected net</span><span class=\"value\">+0.46u" in basket
+    assert "One-hit whole-basket cover</span><span class=\"value\">2" in basket
 
 
 def test_html_ranks_one_in_domain_research_selection_per_fixture(tmp_path: Path) -> None:

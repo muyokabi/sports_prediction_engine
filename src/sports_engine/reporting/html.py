@@ -7,6 +7,8 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+EQUAL_STAKE_RESEARCH_POLICY_VERSION = "equal-stake-research-v1"
+
 
 @dataclass(frozen=True, slots=True)
 class FixtureAuditRow:
@@ -170,6 +172,21 @@ _SHORTLIST_DISQUALIFIERS = frozenset(
     }
 )
 
+_EXPLORATORY_BASKET_DISQUALIFIERS = frozenset(
+    {
+        "CALIBRATION_NOT_VALIDATED",
+        "EXTREME_MODEL_MARKET_DISAGREEMENT",
+        "GLOBAL_PRIOR_SUBSTITUTION",
+        "INSUFFICIENT_REFERENCE_BOOKMAKER_BREADTH",
+        "NO_VALIDATED_MODEL_SPECIFIC_APPLICABILITY_POLICY",
+        "OUT_OF_DOMAIN",
+        "PRIOR_ONLY",
+        "UNSEEN_AWAY_TEAM",
+        "UNSEEN_COMPETITION",
+        "UNSEEN_HOME_TEAM",
+    }
+)
+
 _SHORTLIST_REFERENCE_STATES = frozenset(
     {
         "CURRENT_REFERENCE",
@@ -242,6 +259,154 @@ def _research_shortlist_diagnostics(report: DailyAnalysisReport) -> str:
         f"{len(report.price_targets)} persisted price rows; {len(eligible)} passed every shortlist gate; "
         f"{len(shortlisted)} fixture-diversified selections shown. "
         f"Leading row-level blockers: {leading}.</p>"
+    )
+
+
+def _forecast_eligible(row: OpportunityRow) -> bool:
+    return (
+        row.market == "MATCH_ODDS"
+        and row.applicability_level in {"HIGH", "MEDIUM"}
+        and 0 < row.model_probability < 1
+        and row.model_fair_odds > 1
+        and not {
+            "GLOBAL_PRIOR_SUBSTITUTION",
+            "OUT_OF_DOMAIN",
+            "PRIOR_ONLY",
+            "UNSEEN_AWAY_TEAM",
+            "UNSEEN_HOME_TEAM",
+        }.intersection(row.reasons)
+    )
+
+
+def _top_forecasts(report: DailyAnalysisReport, limit: int = 10) -> tuple[OpportunityRow, ...]:
+    """Return the strongest in-domain 1X2 view per fixture without making a value claim."""
+    candidates = sorted(
+        (row for row in report.price_targets if _forecast_eligible(row)),
+        key=lambda row: (-row.model_probability, row.kickoff, row.fixture, row.selection),
+    )
+    selected: list[OpportunityRow] = []
+    seen_fixtures: set[tuple[str, str, datetime]] = set()
+    for row in candidates:
+        fixture_key = (row.competition, row.fixture, row.kickoff)
+        if fixture_key in seen_fixtures:
+            continue
+        seen_fixtures.add(fixture_key)
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return tuple(selected)
+
+
+def _forecast_rows(report: DailyAnalysisReport) -> str:
+    rows = _top_forecasts(report)
+    if not rows:
+        return (
+            '<tr><td colspan="13" class="empty">No HIGH or MEDIUM in-domain MATCH_ODDS forecast is available. '
+            "Prior-only and unseen-team output is never used to fill this table.</td></tr>"
+        )
+    return "".join(
+        f"<tr><td>{rank}</td><td>{escape(row.competition)}</td><td>{escape(row.kickoff.isoformat())}</td>"
+        f"<td>{escape(row.fixture)}</td><td>{escape(row.selection)}</td>"
+        f"<td>{row.model_probability:.3f}</td><td>{row.model_fair_odds:.2f}</td>"
+        f"<td>{_number(row.reference_odds, 2)}</td><td>{escape(row.bookmaker or '—')}</td>"
+        f"<td>{escape(row.applicability_level)}</td><td>{escape(row.applicability_state)}</td>"
+        f"<td>{escape(row.reference_state)}</td><td>{escape(', '.join(row.reasons))}</td></tr>"
+        for rank, row in enumerate(rows, start=1)
+    )
+
+
+def _exploratory_basket_eligible(row: OpportunityRow) -> bool:
+    """Admit learning positions without weakening validated or production governance."""
+    return (
+        row.applicability_level in {"HIGH", "MEDIUM"}
+        and 0 < row.model_probability < 1
+        and row.model_fair_odds > 1
+        and row.minimum_odds > 1
+        and row.reference_odds is not None
+        and row.reference_odds >= row.minimum_odds
+        and row.reference_expected_return is not None
+        and row.reference_expected_return > 0
+        and row.reference_state in _SHORTLIST_REFERENCE_STATES
+        and row.reference_observed_at is not None
+        and bool(row.bookmaker)
+        and row.snapshot_count > 0
+        and not _EXPLORATORY_BASKET_DISQUALIFIERS.intersection(row.reasons)
+    )
+
+
+def _exploratory_basket(report: DailyAnalysisReport, limit: int = 10) -> tuple[OpportunityRow, ...]:
+    """Rank equal-stake research hypotheses by expected return, then payout reach."""
+    candidates = sorted(
+        (row for row in report.price_targets if _exploratory_basket_eligible(row)),
+        key=lambda row: (
+            _return_sort_key(row),
+            -(row.reference_odds or 0.0),
+            -row.model_probability,
+            row.kickoff,
+            row.fixture,
+            row.market,
+            row.selection,
+        ),
+    )
+    selected: list[OpportunityRow] = []
+    seen_fixtures: set[tuple[str, str, datetime]] = set()
+    for row in candidates:
+        fixture_key = (row.competition, row.fixture, row.kickoff)
+        if fixture_key in seen_fixtures:
+            continue
+        seen_fixtures.add(fixture_key)
+        selected.append(row)
+        if len(selected) >= limit:
+            break
+    return tuple(selected)
+
+
+def _basket_summary(report: DailyAnalysisReport) -> str:
+    rows = _exploratory_basket(report)
+    if not rows:
+        return (
+            '<div class="board"><div class="metric"><span class="label">Selections</span>'
+            '<span class="value">0</span></div></div><p class="muted">No row passed the exploratory basket policy. '
+            "The basket is never padded with negative-EV, prior-only, uncalibrated-family, thin-book, or extreme-disagreement rows.</p>"
+        )
+    count = len(rows)
+    expected_net = sum(row.reference_expected_return or 0.0 for row in rows)
+    average_odds = sum(row.reference_odds or 0.0 for row in rows) / count
+    odds_three_plus = sum((row.reference_odds or 0.0) >= 3.0 for row in rows)
+    one_hit_cover = sum((row.reference_odds or 0.0) >= count for row in rows)
+    return (
+        '<div class="board">'
+        f'<div class="metric"><span class="label">Equal-stake selections</span><span class="value">{count}</span></div>'
+        f'<div class="metric"><span class="label">Stake units at risk</span><span class="value">{count:.1f}</span></div>'
+        f'<div class="metric"><span class="label">Model expected net</span><span class="value">{expected_net:+.2f}u</span></div>'
+        f'<div class="metric"><span class="label">Model expected ROI</span><span class="value">{expected_net / count:+.1%}</span></div>'
+        f'<div class="metric"><span class="label">Average reference odds</span><span class="value">{average_odds:.2f}</span></div>'
+        f'<div class="metric"><span class="label">Odds 3.0+</span><span class="value">{odds_three_plus}</span></div>'
+        f'<div class="metric"><span class="label">One-hit whole-basket cover</span><span class="value">{one_hit_cover}</span></div>'
+        "</div>"
+    )
+
+
+def _basket_rows(report: DailyAnalysisReport) -> str:
+    rows = _exploratory_basket(report)
+    if not rows:
+        return '<tr><td colspan="24" class="empty">No selection meets the exploratory equal-stake basket policy.</td></tr>'
+    basket_size = len(rows)
+    return "".join(
+        f"<tr><td>{rank}</td><td>{escape(row.competition)}</td><td>{escape(row.kickoff.isoformat())}</td>"
+        f"<td>{escape(row.fixture)}</td><td>{escape(row.market)}</td><td>{escape(row.selection)}</td>"
+        f"<td>{row.model_probability:.3f}</td><td>{row.model_fair_odds:.2f}</td>"
+        f"<td>{_number(row.reference_odds, 2)}</td><td>{(row.reference_odds or 0.0) - 1:.2f}u</td>"
+        f"<td>{(row.reference_odds or 0.0) / basket_size:.1%}</td>"
+        f"<td>{_percent(row.reference_expected_return)}</td>"
+        f"<td>{row.minimum_odds:.2f}</td><td>{_minimum_odds_test(row)}</td>"
+        f"<td>{_percent(_minimum_odds_cushion(row))}</td><td>{escape(row.bookmaker or '—')}</td>"
+        f"<td>{escape(row.reference_observed_at.isoformat() if row.reference_observed_at else '—')}</td>"
+        f"<td>{_number(row.reference_age_minutes, 0)}m</td><td>{row.snapshot_count}</td>"
+        f"<td>{escape(row.applicability_level)}</td><td>{escape(row.applicability_state)}</td>"
+        f"<td>{escape(', '.join(_shortlist_evidence_warnings(row)) or 'NO_EVIDENCE_WARNING')}</td>"
+        f"<td>{escape(row.decision)}</td><td>{escape(', '.join(row.reasons))}</td></tr>"
+        for rank, row in enumerate(rows, start=1)
     )
 
 
@@ -431,7 +596,9 @@ def render_daily_analysis(report: DailyAnalysisReport, destination: Path) -> Pat
     embedded = json.dumps(asdict(report), default=str, ensure_ascii=False).replace("</", "<\\/")
     tabs = (
         ("overview", "Overview"),
-        ("research", "Top research"),
+        ("forecasts", "Top forecasts"),
+        ("basket", "Research basket"),
+        ("research", "Validated research"),
         ("opportunities", "Top opportunities"),
         ("matches", "All matches"),
         ("market", "Market board"),
@@ -534,7 +701,9 @@ details{{border:1px solid var(--line);background:var(--panel);margin:8px 0;borde
 <div class="board">{metric_html}</div><div class="visual-grid"><div class="visual-card"><h3>Decision state</h3>{decision_visual}<div class="legend"><span><i style="background:var(--success)"></i>Production</span><span><i style="background:var(--violet)"></i>Shadow</span><span><i style="background:var(--accent)"></i>Research signal</span></div></div><div class="visual-card"><h3>Probability surface by market family</h3>{market_chart}</div></div><div class="warning"><strong>SHADOW ROWS ARE NOT BETTING PICKS. MANUAL PRICE CONFIRMATION REQUIRED.</strong> Use their minimum odds only for prospective paper tracking. Real-money consideration requires an explicit <code>PRODUCTION_ACTIONABLE / BET_IF_PRICE_AVAILABLE</code> decision plus a newly checked operator price. API-Football prices are reference observations, not guaranteed executable prices.</div><h2>Research state</h2><div class="panel">
 <p>Football pricing and market reference are separate: eligible history is <strong>{report.eligible_fixtures}</strong>; model state is <strong>{escape(report.model_health)}</strong>; market references are <strong>{escape(report.odds_health)}</strong>. Execution edge remains unknown until an operator checks a broker.</p>
 <p class="muted">No probability, price, or opportunity is inferred when persisted evidence is unavailable.</p></div></section>
-<section id="research" class="tab"><h2>Top 10 evidence-qualified research selections</h2><p class="muted">This shortlist is independent from the slower production-champion gate, but it is not evidence-free. Admission requires HIGH or MEDIUM fixture applicability, validated calibration, validated competition probability scope, adequate reference-bookmaker breadth, no extreme model–market disagreement, a persisted API-Football quote at or above provisional minimum odds, and positive calculable reference EV. Missing champion status or historical market-baseline approval remains visible but does not by itself suppress this research shortlist. If fewer than ten qualify, the table is not padded with prior-only or out-of-domain guesses. Eligible rows are ranked lexicographically by applicability, fewer remaining evidence warnings, price cushion above minimum acceptable odds, reference expected return, then model probability. No arbitrary weighted reliability score is fitted, and model probability is not a guarantee or statistical confidence interval. Recheck the bookmaker price before any use; API-reference EV is not guaranteed executable EV.</p>{_research_shortlist_diagnostics(report)}<div class="panel"><table id="research-confidence-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest API reference</th><th>Bookmaker</th><th>Reference observed</th><th>Age</th><th>Valid observations</th><th>Movement</th><th>Dispersion</th><th>Market p</th><th>Reference edge</th><th>Expected return @ API ref</th><th>Robust estimate</th><th>Execution edge</th><th>Minimum-odds test</th><th>Price cushion</th><th>Minimum-odds basis</th><th>Bookmaker-breadth gate</th><th>Shortlist evidence warnings</th><th>Validated uncertainty adjustment</th><th>Applicability level</th><th>Applicability state</th><th>Reference state</th><th>Governance</th><th>Gate reasons</th></tr></thead><tbody>{_research_prediction_rows(report)}</tbody></table></div></section>
+<section id="forecasts" class="tab"><h2>Top 10 in-domain forecasts</h2><p class="muted">This view answers what the model considers most likely, not whether a quoted price is valuable. It selects the highest-probability MATCH_ODDS outcome per fixture from HIGH or MEDIUM applicability rows. It does not require bookmaker odds, competition validation, a champion, or a market baseline, and it never fills space with prior-only or unseen-team output.</p><div class="panel"><table id="forecast-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Forecast</th><th>Model p</th><th>Fair odds</th><th>Latest API reference</th><th>Bookmaker</th><th>Applicability level</th><th>Applicability state</th><th>Reference state</th><th>Evidence warnings</th></tr></thead><tbody>{_forecast_rows(report)}</tbody></table></div></section>
+<section id="basket" class="tab"><h2>Exploratory equal-stake research basket</h2><p class="muted">Policy <code>{EQUAL_STAKE_RESEARCH_POLICY_VERSION}</code>. This is a deterministic learning portfolio, not a production betting recommendation. It selects at most one positive-model-EV position per fixture, up to ten, from HIGH or MEDIUM applicability rows with globally validated market-family calibration, adequate reference breadth, no extreme model–market disagreement, and an API-Football reference at or above the provisional minimum price. Competition-scope validation may remain unresolved and is displayed as a warning rather than making the hypothesis invisible. Rows rank by model-expected return, then reference-odds payout reach; there are no invented A/B setup grades. One unit is assigned to every row only for comparable research accounting.</p><div class="warning"><strong>EQUAL-STAKE ARITHMETIC:</strong> a winning decimal-odds O position returns O stake units and offsets O−1 other one-unit stakes. One winner covers an entire N-selection basket only when O≥N. Therefore a 4.0 winner covers a three-selection basket with profit, but does not cover a ten-selection basket. Expected return is model-dependent, correlation is not assumed away, and every price must be rechecked before any real-world use.</div>{_basket_summary(report)}<div class="panel"><table id="basket-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>API reference</th><th>Other 1u stakes offset</th><th>One-hit basket coverage</th><th>Model expected return</th><th>Minimum odds</th><th>Minimum test</th><th>Price cushion</th><th>Bookmaker</th><th>Observed</th><th>Age</th><th>Valid observations</th><th>Applicability</th><th>State</th><th>Unresolved evidence</th><th>Governance</th><th>All reasons</th></tr></thead><tbody>{_basket_rows(report)}</tbody></table></div></section>
+<section id="research" class="tab"><h2>Top 10 evidence-qualified research selections</h2><p class="muted">This validated shortlist is independent from the slower production-champion gate, but it is not evidence-free. Admission requires HIGH or MEDIUM fixture applicability, validated calibration, validated competition probability scope, adequate reference-bookmaker breadth, no extreme model–market disagreement, a persisted API-Football quote at or above provisional minimum odds, and positive calculable reference EV. Missing champion status or historical market-baseline approval remains visible but does not by itself suppress this research shortlist. If fewer than ten qualify, the table is not padded with prior-only or out-of-domain guesses. Eligible rows are ranked lexicographically by applicability, fewer remaining evidence warnings, price cushion above minimum acceptable odds, reference expected return, then model probability. No arbitrary weighted reliability score is fitted, and model probability is not a guarantee or statistical confidence interval. Recheck the bookmaker price before any use; API-reference EV is not guaranteed executable EV.</p>{_research_shortlist_diagnostics(report)}<div class="panel"><table id="research-confidence-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest API reference</th><th>Bookmaker</th><th>Reference observed</th><th>Age</th><th>Valid observations</th><th>Movement</th><th>Dispersion</th><th>Market p</th><th>Reference edge</th><th>Expected return @ API ref</th><th>Robust estimate</th><th>Execution edge</th><th>Minimum-odds test</th><th>Price cushion</th><th>Minimum-odds basis</th><th>Bookmaker-breadth gate</th><th>Shortlist evidence warnings</th><th>Validated uncertainty adjustment</th><th>Applicability level</th><th>Applicability state</th><th>Reference state</th><th>Governance</th><th>Gate reasons</th></tr></thead><tbody>{_research_prediction_rows(report)}</tbody></table></div></section>
 <section id="opportunities" class="tab"><h2>Top 10 decision candidates</h2><p class="muted">PRODUCTION_ACTIONABLE rows have passed every persisted evidence gate but still require a newly checked operator price. SHADOW_ACTIONABLE rows are prospective validation observations, not approved bets. Reference edge alone is not execution edge.</p><div class="filters"><select id="league-filter"><option value="">All leagues</option>{league_options}</select><select id="decision-filter"><option value="">All decisions</option><option>PRODUCTION_ACTIONABLE</option><option>SHADOW_ACTIONABLE</option></select></div><div class="panel"><table id="opportunity-table"><thead><tr><th>Rank</th><th>League</th><th>Kickoff</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Reference bookmaker</th><th>Reference observed</th><th>Age</th><th>Market p</th><th>Reference edge</th><th>Robust estimate</th><th>Execution edge</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{_opportunity_rows(report)}</tbody></table></div></section>
 <section id="matches" class="tab"><h2>Fixture research panels</h2>{research_panels or '<div class="panel empty">No expected fixtures in this range.</div>'}</section>
 <section id="market" class="tab"><h2>Football price targets and API-Football references</h2><p class="muted">Latest-per-bookmaker references are used for comparison. Earlier snapshots contribute movement history only. Gate reasons explain why a row is not production-actionable.</p><div class="filters"><input id="market-search" type="search" placeholder="Search fixture, league or selection…" aria-label="Search market board"><select id="market-family"><option value="">All market families</option>{"".join(f"<option>{escape(name)}</option>" for name in sorted(market_counts))}</select><select id="market-decision"><option value="">All decision states</option>{"".join(f"<option>{escape(name)}</option>" for name in sorted({row.decision for row in report.price_targets}))}</select><span id="market-count" class="result-count">{len(report.price_targets)} rows</span></div><div class="panel"><table id="market-table"><thead><tr><th>Competition</th><th>Fixture</th><th>Market</th><th>Selection</th><th>Model p</th><th>Fair odds</th><th>Minimum odds</th><th>Latest best API reference</th><th>Bookmaker</th><th>Age</th><th>Snapshots</th><th>Movement</th><th>Dispersion</th><th>Reference state</th><th>Decision</th><th>Gate reasons</th></tr></thead><tbody>{market_rows}</tbody></table></div></section>

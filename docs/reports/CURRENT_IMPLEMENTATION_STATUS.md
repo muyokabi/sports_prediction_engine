@@ -20,6 +20,12 @@ The HTML now includes an independently evidence-qualified `Top Research` section
 
 The earlier live analysis `e75f38b4-ecaa-4be9-9590-76a3e557d371` completed 12/12 fixtures and wrote 519 price rows. Eleven fixtures were `MEDIUM / PARTIALLY_POOLED`; one fixture was `PRIOR_ONLY`. Its report contained one genuinely evidence-qualified Top Research row for Millonarios v Once Caldas and correctly excluded the other rows, principally for missing competition probability validation or calibration. This proves the section can populate from persisted evidence without manufacturing a fixed daily quota. It does not prove predictive edge or real-money readiness.
 
+## Forecast and exploratory-basket usability layer
+
+The HTML report now separates four questions that were previously compressed into two often-empty top tables. `Top Forecasts` exposes up to ten strongest in-domain 1X2 views without requiring a market quote or implying value. `Research Basket` selects up to ten one-per-fixture, equal-unit learning hypotheses using positive model-expected return, a reference at or above the provisional minimum, exact-family global calibration, adequate bookmaker breadth, and no prior-only, unseen-team or extreme-disagreement state. Competition-scope validation is displayed as unresolved evidence in this exploratory view instead of hiding the hypothesis; it remains mandatory for `Validated Research` and production actionability.
+
+The basket ranks expected return before payout reach and reports exact equal-stake arithmetic. At decimal odds `O`, one winning unit returns `O` units and offsets `O-1` other one-unit stakes; one winner covers an `N`-selection basket only when `O >= N`. High odds are therefore not treated as value by themselves, and no A/B or “sure bet” grades are invented. This is a report-only organization of already persisted immutable opportunities: no model role, prediction, governance state, stake instruction, or production gate changed. The durable policy is `docs/research/EQUAL_STAKE_RESEARCH_BASKET_POLICY.md`; prospective basket settlement evaluation remains open.
+
 ## Governance and evidence
 
 Migration 034 makes promotion assessments and market-role changes append-only. Integrity validates a production label against the role, calibration, competition scope, and other evidence that existed at the opportunity's creation time. Three legacy production labels lacking provable historical role events were quarantined as `RESEARCH_VALUE_SIGNAL / NO_BET`; their immutable predictions and fair prices were not changed.
@@ -92,6 +98,24 @@ PXR-004 added exact fold-local effective team-history evidence to score-model ev
 No production applicability state, probability, price, opportunity, calibration, role, or shortlist rule changed. The existing floor remains a conservative fail-closed gate, not a newly proven confidence interval or stable uncertainty discriminator. Prediction quality and candidate quality did not improve; the evidence deficit is now precisely measured. A genuinely later prospective era is required for confirmation. Classification remains `RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`.
 
 Post-change verification: 249 tests passed, Ruff passed, mypy passed for 167 source files, warehouse integrity passed, source/evaluation artifact hashes passed, and the persisted acceptance report remained reconciled to 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
+## ML score-fusion experiment — 2026-10-14
+
+PXR-005 adds a research-only bridge between the stronger 1X2 ML classifiers and the coherent Dixon-Coles pricing distribution. Outcome-marginal projection preserves a single normalized score matrix and therefore prevents separate ML probabilities from leaking incoherently into BTTS, totals, or correct score.
+
+The selected 70% CatBoost blend improved final-fold 1X2 and over-2.5 proper loss, but BTTS degradation narrowly exceeded the predeclared uncertainty-aware family tolerance. The research gate failed. ML is therefore not being discarded, but this implementation is not served live and cannot receive a champion/actionability label from these retrospective artifacts. The command and hash-bound output make the hypothesis repeatable on a genuinely later temporal era.
+
+Post-change verification: 253 tests passed, Ruff passed, mypy passed for 168 source files, and the PXR-005 prediction artifact hash verified. No warehouse, model-role, prediction, price, opportunity, or production-governance row was mutated.
+
+## Direct ML family-specialist experiment — 2026-10-14
+
+PXR-006 implements independent direct binary research challengers for BTTS and over 2.5. It uses each ML candidate's exact feature manifest, chronological fold protocol, and fold-local calibration; writes hash-bound predictions; and confines every metric and future role to its exact market family.
+
+CatBoost significantly outperformed Dixon-Coles in both BTTS and totals on 9,469 aligned out-of-fold fixtures. LightGBM also improved BTTS, but CatBoost versus LightGBM BTTS was statistically unresolved; CatBoost clearly dominated LightGBM for totals and logistic for both families. This supports independent family ownership but does not support assigning different algorithms simply to create variety.
+
+The evaluator and paired comparator are implemented, but no live model role or probability path changed. These are retrospective development results on an already inspected era. Direct family specialists still require later-era confirmation, exact-family calibration/scope evidence, and the configured market-baseline policy before live use.
+
+Post-change verification: 255 tests passed, Ruff passed, mypy passed for 170 source files, all three family-specialist prediction hashes verified, and the paired comparison artifact was reproduced. No warehouse or production-governance row was mutated.
 
 ## Durable evidence
 

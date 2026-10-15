@@ -45,6 +45,20 @@ uv run sports-engine models assess-promotions --json
 has no champion, so that command correctly exits with status 2; it is not a
 replay-acceptance prerequisite.
 
+To repeat the research-only ML/score fusion experiment, pass aligned score-model
+and ML walk-forward reports to `sports-engine evaluate-ml-score-fusion`. The
+command writes a hash-bound artifact under `artifacts/evaluation/fusion`; it does
+not change serving, roles, predictions, prices, or actionability. Treat a result
+as promotion evidence only when its temporal era was genuinely uninspected and
+the full cross-family research gate passes.
+
+To test genuine family specialization, run `sports-engine
+evaluate-ml-family-specialist ML_REPORT --score-report SCORE_REPORT`. This fits
+direct BTTS and over-2.5 targets; never treat its result as a MATCH_ODDS or
+correct-score model. The same algorithm may legitimately win more than one
+family. Choose independently by paired chronological evidence, not by forcing
+algorithm diversity.
+
 Historical replay odds may be unavailable even when current-season odds are accessible. This blocks replay market benchmarking, not current production collection or offline pipeline validation. Accumulate detailed historical packages in bounded tranches with `sports-engine football historical-backfill --season 2024 --max-requests 250`; configured replay history augments chronological training without changing the production prediction universe.
 
 ## Daily unattended operation and missed runs
@@ -109,6 +123,16 @@ applicability, governance and every gate reason. Model probability is not a conf
 API-reference EV is not guaranteed executable EV. Recheck the bookmaker price before any use.
 The quality funnel reports how many price rows passed every shortlist gate and the leading row-level
 blockers. It is an evidence-accumulation diagnostic, not permission to weaken a gate to fill ten rows.
+
+The report separates that strict view from two earlier research layers. `Top Forecasts` shows up to ten
+in-domain `MATCH_ODDS` views when a qualified score model exists; it makes no value claim and does not
+require a reference quote. `Research Basket` shows up to ten equal-unit exploratory hypotheses, one per
+fixture, requiring globally calibrated family probabilities, a usable and sufficiently broad API-Football
+reference, positive expected return, a reference at or above the provisional minimum, and no prior-only,
+unseen-team or extreme-disagreement state. Competition-scope validation remains visible as an unresolved
+research warning there, but is still mandatory in strict `Validated Research` and production governance.
+See `docs/research/EQUAL_STAKE_RESEARCH_BASKET_POLICY.md` for the arithmetic, ranking, exclusions and
+governance boundary. Never reinterpret the research basket as an approved stake list or pad it to ten.
 
 ## Generated-file cleanup
 
