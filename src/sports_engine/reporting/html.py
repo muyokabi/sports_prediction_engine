@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from html import escape
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -266,7 +267,9 @@ def _forecast_eligible(row: OpportunityRow) -> bool:
     return (
         row.market == "MATCH_ODDS"
         and row.applicability_level in {"HIGH", "MEDIUM"}
+        and isfinite(row.model_probability)
         and 0 < row.model_probability < 1
+        and isfinite(row.model_fair_odds)
         and row.model_fair_odds > 1
         and not {
             "GLOBAL_PRIOR_SUBSTITUTION",
@@ -319,12 +322,17 @@ def _exploratory_basket_eligible(row: OpportunityRow) -> bool:
     """Admit learning positions without weakening validated or production governance."""
     return (
         row.applicability_level in {"HIGH", "MEDIUM"}
+        and isfinite(row.model_probability)
         and 0 < row.model_probability < 1
+        and isfinite(row.model_fair_odds)
         and row.model_fair_odds > 1
+        and isfinite(row.minimum_odds)
         and row.minimum_odds > 1
         and row.reference_odds is not None
+        and isfinite(row.reference_odds)
         and row.reference_odds >= row.minimum_odds
         and row.reference_expected_return is not None
+        and isfinite(row.reference_expected_return)
         and row.reference_expected_return > 0
         and row.reference_state in _SHORTLIST_REFERENCE_STATES
         and row.reference_observed_at is not None

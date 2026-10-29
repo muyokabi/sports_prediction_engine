@@ -37,7 +37,7 @@ The policy ranks by positive expected return first and payout reach second. It d
 Top Forecasts selects at most one `MATCH_ODDS` outcome per fixture and at most ten fixtures. A row must:
 
 - have `HIGH` or `MEDIUM` applicability;
-- contain a finite probability strictly between zero and one and a valid fair price;
+- contain a finite probability strictly between zero and one and a finite valid fair price;
 - not depend on a global-prior substitution, an unseen team, or an out-of-domain state.
 
 Bookmaker odds, a champion role, competition validation, and a market baseline are not required because this view makes no value or execution claim. The table is never padded with prior-only output.
@@ -47,10 +47,10 @@ Bookmaker odds, a champion role, competition validation, and a market baseline a
 The equal-stake research basket selects at most one row per fixture and at most ten rows. A row must have:
 
 - `HIGH` or `MEDIUM` fixture applicability;
-- a valid model probability, fair odds, and provisional minimum odds;
+- a finite valid model probability, fair odds, and provisional minimum odds;
 - a persisted API-Football reference with timestamp, bookmaker, and observation count;
 - reference odds at or above the provisional minimum;
-- positive calculable model-expected return;
+- positive finite calculable model-expected return;
 - globally validated calibration for the exact market family;
 - adequate reference-bookmaker breadth;
 - no extreme model-market disagreement;

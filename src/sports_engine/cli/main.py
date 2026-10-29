@@ -415,6 +415,35 @@ def evaluate_applicability(
     typer.echo(f"applicability-discrimination={path}")
 
 
+@app.command("evaluate-confirmation-readiness")
+def evaluate_confirmation_readiness_command(
+    baseline_dataset: str = typer.Option(..., help="Previously inspected feature dataset ID or name."),
+    candidate_dataset: str = typer.Option(..., help="Later feature dataset ID or name."),
+    minimum_new_rows: int = typer.Option(100, min=1, help="Predeclared minimum genuinely later rows."),
+) -> None:
+    """Audit whether a dataset contains a clean later confirmation era."""
+    from sports_engine.core.config import load_config
+    from sports_engine.evaluation.confirmation_readiness import evaluate_confirmation_readiness
+    from sports_engine.warehouse.connection import connect
+
+    config = load_config()
+    connection = connect(config.database_path, read_only=True)
+    try:
+        path = evaluate_confirmation_readiness(
+            connection,
+            baseline_dataset,
+            candidate_dataset,
+            config.artifacts_dir / "evaluation" / "confirmation-readiness",
+            minimum_new_rows=minimum_new_rows,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+    finally:
+        connection.close()
+    typer.echo(f"confirmation-readiness={path}")
+
+
 @app.command("backtest")
 def backtest(all_models: bool = typer.Option(False, "--all")) -> None:
     from sports_engine.cli.runtime import open_database

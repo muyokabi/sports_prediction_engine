@@ -248,3 +248,60 @@ The existing floor is directionally useful in three folds and strongly useful in
 The next experiment must be predeclared before a genuinely later era accumulates. It should freeze threshold 5.0, log loss/Brier risk differences, calibration, minimum group sizes, and coverage; evaluate temporal and competition subgroups; and permit a policy change only if the new era confirms lower accepted risk without a calibration regression. Alternative thresholds must not be selected on that final era.
 
 Verification: 249 tests passed, repository-wide Ruff passed, mypy passed for 167 source files, `git diff --check` passed, warehouse integrity passed, and both source evaluation and prediction digests were verified. Persisted analysis `ec603dc8-13c4-4431-aec7-eb3a4e51b017` remains the real-report reconciliation target: 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
+## PXR-005 — ML-assisted coherent score-distribution projection
+
+**Opened / completed:** 2026-10-14 (Africa/Nairobi)
+
+**Decision:** `PROMISING_MIXED_RESULT / RESEARCH_ONLY`
+
+**Production ledger mutation:** none.
+
+The frozen challenger blended Dixon-Coles and ML 1X2 probabilities, then projected the target home/draw/away marginals back onto the corresponding regions of one normalized Dixon-Coles score matrix. The pre-final 6,385 aligned out-of-fold rows selected 70% CatBoost weight, subject to a 0.001 log-loss non-inferiority margin for both BTTS and over 2.5. On the already-inspected 3,084-row final fold, MATCH_ODDS log loss improved by -0.009155 with a 95% chronological block interval [-0.014474, -0.004104], and totals improved by -0.000941 [-0.001620, -0.000148]. BTTS worsened by +0.000545 [0.000020, 0.001045], narrowly breaching the frozen family-protection gate.
+
+The projection preserved distributional coherence and demonstrated incremental ML outcome signal, but it failed its cross-family contract. No serving, role, calibration, prediction, price, opportunity, or actionability state changed. The result is development evidence, not promotion evidence, because the temporal era had already been inspected.
+
+## PXR-006 — Direct ML market-family specialists
+
+**Opened / completed:** 2026-10-14 (Africa/Nairobi)
+
+**Decision:** `ARCHITECTURE_ACCEPTED / LATER_CONFIRMATION_REQUIRED`
+
+**Production ledger mutation:** none.
+
+Logistic, CatBoost, and LightGBM were retrained as independent direct binary challengers for BTTS and over 2.5 using their immutable feature manifests, four chronological folds, fold-local fitting, and fold-local Platt calibration. Evidence and any future role are confined to the exact family; the outputs cannot price MATCH_ODDS, correct score, or another family.
+
+On 9,469 aligned out-of-fold fixtures, CatBoost BTTS log loss was 0.686604 versus 0.691404 for Dixon-Coles, a paired difference of -0.004800 [-0.007556, -0.001934]. CatBoost totals log loss was 0.681053 versus 0.689442, a difference of -0.008389 [-0.012536, -0.004206]. CatBoost dominated logistic in both families and LightGBM for totals. CatBoost versus LightGBM BTTS remained unresolved because the paired log-loss interval ended at +0.000008.
+
+The family-specialist evaluator, binary calibration, prediction digests, and paired comparator were retained. Live integration remains blocked because this was retrospective development evidence and lacks genuinely later confirmation, exact-family calibration/scope validation, and the configured market-baseline evidence.
+
+## PXR-007 — Temporal confirmation-readiness audit
+
+**Opened / completed:** 2026-10-15 (Africa/Nairobi)
+
+**Decision:** `INSUFFICIENT_GENUINELY_LATER_ROWS / DO_NOT_RERUN CONFIRMATION`
+
+**Production ledger mutation:** none. The warehouse was opened read-only; one immutable evaluation artifact was written.
+
+### Hypothesis and frozen contract
+
+The hypothesis was that the newest registered feature dataset contained enough genuinely later outcomes to serve as a confirmation era for PXR-006. Before inspecting any specialist loss on the new rows, the audit froze the prior PXR-006 dataset as the baseline, required every addition to be strictly later than its maximum prediction timestamp, prohibited removed rows and changed overlapping targets, and reused the repository's established 100-row minimum subgroup floor as the minimum size for running a confirmation evaluation. Passing this audit would only permit evaluation; it would not supply promotion, calibration, market-baseline, or actionability evidence.
+
+### Lineage and result
+
+| Item | Baseline | Candidate |
+|---|---|---|
+| Dataset | `historical-models-20261014T123001879333Z` | `historical-models-20261014T194845588433Z` |
+| Dataset hash | `b45d3ed8b49026a80e580a17ecfc18a38171b881a66501e3078e3c5205aed831` | `463ab94f394ffd5da17fd2335b6f0f6b117442e7a463a76278f4a499466df3fc` |
+| Rows | 22,277 | 22,282 |
+| Maximum timestamp | 2026-10-12 23:30 UTC | 2026-10-13 17:00 UTC |
+
+The candidate added exactly five fixtures, all strictly later and all on 2026-10-13. It removed zero rows, changed zero overlapping targets, and added zero rows inside the previously inspected era. The delta is clean but only 5% of the predeclared 100-row readiness floor and spans one date. The hypothesis was rejected without fitting or scoring another specialist.
+
+Artifact: `artifacts/evaluation/confirmation-readiness/confirmation-readiness-b45d3ed8b490-to-463ab94f394f-94e396cfc164.json`. The artifact binds both dataset hashes and the SHA-256 of the five-row addition set.
+
+### Decision and next experiment
+
+Do not reinterpret the five rows, the latest full walk-forward rerun, or recycled final-fold rows as later confirmation. Accumulate a genuinely later outcome era, rerun this audit, then freeze and execute the exact-family CatBoost-versus-Dixon-Coles/LightGBM comparison without changing features, calibration, or thresholds on that era. Until then PXR-006 remains retrospective research evidence and every live market-family role remains unchanged.
+
+Verification: 260 tests passed, repository-wide Ruff passed, mypy passed for 171 source files, `git diff --check` passed, and warehouse integrity passed. The audit artifact's filename digest and five-row addition-set SHA-256 were independently reproduced. Live analysis `c799819a-1215-4795-9b75-daa554067c31` reconciled to 25 expected/terminal fixtures, eight predictions, 330 opportunities, 145 research value signals, and zero shadow/production labels; its HTML exposes the corresponding 25 expected, eight analyzed, 330 priced and 145 signal counts.

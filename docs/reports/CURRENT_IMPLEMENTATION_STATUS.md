@@ -1,6 +1,6 @@
 # Current Implementation Status
 
-Verified 2026-10-14 (Africa/Nairobi).
+Verified 2026-10-15 (Africa/Nairobi).
 
 ## Status
 
@@ -8,7 +8,7 @@ Verified 2026-10-14 (Africa/Nairobi).
 
 The engine continues to produce fixture probabilities and fair prices without an active market-family champion. Production actionability is a separate fail-closed label: the current warehouse has zero `PRODUCTION_ACTIONABLE` opportunities and zero active champions.
 
-The live ledger is at schema 34 and contains 1,241 competitions, 1,443 competition-seasons, 1,046 teams, 69,542 fixtures, 60,815 completed fixtures (`FT`, `AET`, or `PEN`), 23,850 ML-eligible fixture-quality assessments, 106 prospective odds snapshots over 55 fixtures, 13 feature datasets, 71 model runs, 207 institutional predictions, and 8,520 opportunities. Opportunity governance is 5,894 `RESEARCH_ONLY`, 2,619 `RESEARCH_VALUE_SIGNAL`, seven historical `SHADOW_ACTIONABLE`, and zero production-actionable. All seven shadow records have now settled as paper-tracking evidence; that sample is not sufficient to demonstrate calibration, durable edge, or bankroll safety. No claim of real-money readiness is justified by these counts.
+The live ledger is at schema 34 and contains 1,241 competitions, 1,443 competition-seasons, 1,046 teams, 69,542 fixtures, 60,835 completed fixtures (`FT`, `AET`, or `PEN`), 23,872 ML-eligible fixture-quality assessments, 189 prospective odds snapshots over 94 fixtures, 15 feature datasets, 83 model runs, 232 institutional predictions, and 9,606 opportunities. The warehouse still has zero `PRODUCTION_ACTIONABLE` opportunities and zero active champions. Seven historical shadow records have settled; that sample is not sufficient to demonstrate calibration, durable edge, or bankroll safety. No claim of real-money readiness is justified by these counts.
 
 ## Latest acceptance
 
@@ -40,10 +40,10 @@ The schema-33 warehouse was backed up and verified before migration at:
 
 | Check | Result |
 |---|---|
-| Full test suite | 233 passed |
+| Full test suite | 260 passed |
 | Focused report/discovery regressions | 22 passed |
 | Ruff | Passed |
-| Strict mypy | Passed for 163 source files |
+| Strict mypy | Passed for 171 source files |
 | Migrations | Schema 34/current |
 | Warehouse integrity | Passed after migration and final acceptance |
 | Pre-change backup | Verified schema 33; 14,648 files; nine critical tables |
@@ -55,7 +55,7 @@ The schema-33 warehouse was backed up and verified before migration at:
 
 ## Remaining limitations
 
-- Only 55 fixtures have prospective reference odds and seven shadow records have settled; this is not a sufficient prospective sample to demonstrate durable edge.
+- Only 94 fixtures have prospective reference odds and seven shadow records have settled; this is not a sufficient prospective sample to demonstrate durable edge.
 - There is no active market-family champion.
 - Calibration and competition-scope validation currently cover `MATCH_ODDS` only. BTTS and totals remain research-priced but cannot enter the evidence-qualified shortlist until dedicated chronological validation exists.
 - Historical pre-match odds, injuries, expected/confirmed lineups, and movement cannot be invented where they were not captured.
@@ -116,6 +116,16 @@ CatBoost significantly outperformed Dixon-Coles in both BTTS and totals on 9,469
 The evaluator and paired comparator are implemented, but no live model role or probability path changed. These are retrospective development results on an already inspected era. Direct family specialists still require later-era confirmation, exact-family calibration/scope evidence, and the configured market-baseline policy before live use.
 
 Post-change verification: 255 tests passed, Ruff passed, mypy passed for 170 source files, all three family-specialist prediction hashes verified, and the paired comparison artifact was reproduced. No warehouse or production-governance row was mutated.
+
+## Temporal confirmation-readiness audit — 2026-10-15
+
+PXR-007 added a reusable read-only audit for the prerequisite to later-period model confirmation. Comparing the PXR-006 baseline dataset `b45d3ed8b490...` with the newest registered dataset `463ab94f394f...` found exactly five additions, all strictly later and on 2026-10-13, with zero removals, zero changed historical targets, and zero additions inside the previously inspected era. The delta is clean but below the frozen 100-row readiness floor, so no family-specialist metric was recomputed and no live logic changed.
+
+The latest complete real report, analysis `c799819a-1215-4795-9b75-daa554067c31` for 2026-10-15, reconciles to 25 expected/terminal fixtures, eight persisted predictions, 330 persisted opportunities, 145 research value signals, and zero shadow or production labels. Its HTML shows 25 expected fixtures, eight analyzed fixtures, 330 priced selections, 145 research signals, and zero shadow/production qualification.
+
+The concise research views also reconcile: Top Forecasts contains eight finite, in-domain `MATCH_ODDS` rows—one for each predicted fixture—and the Research Basket contains two finite, price-qualified, one-per-fixture hypotheses. The basket reports two notional units at risk, +0.73 model-expected units, +36.5% model-expected ROI, and clearly retains unresolved competition, margin, uncertainty, and champion warnings. Validated Research remains empty because all 330 price rows fail at least one strict evidence gate, led by missing competition probability validation. These views remain report-only research organization, not actionability.
+
+Prediction quality did not improve; candidate quality did not change. Evidence discipline improved by preventing a new dataset hash with only five outcomes from being presented as an untouched confirmation era. PXR-006 remains retrospective research evidence and the system remains `RESEARCH_AND_SHADOW / NOT_REAL_MONEY_APPROVED`.
 
 ## Durable evidence
 

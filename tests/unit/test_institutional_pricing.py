@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -254,6 +255,12 @@ def test_html_exposes_forecasts_and_equal_stake_learning_basket(tmp_path: Path) 
                     ("CALIBRATION_NOT_VALIDATED", "COMPETITION_PROBABILITY_NOT_VALIDATED"),
                 ),
                 row("Prior v Unknown", "HOME", 0.60, 2.00, 0.20, ("PRIOR_ONLY",), level="PRIOR_ONLY"),
+                replace(
+                    row("Invalid v Infinite", "HOME", 0.50, 2.50, 0.25, ()),
+                    model_fair_odds=float("inf"),
+                    reference_odds=float("inf"),
+                    reference_expected_return=float("inf"),
+                ),
             ),
         ),
         tmp_path / "report.html",
@@ -265,9 +272,11 @@ def test_html_exposes_forecasts_and_equal_stake_learning_basket(tmp_path: Path) 
 
     assert "A v B" in forecasts and "C v D" in forecasts and "E v F" in forecasts
     assert "Prior v Unknown" not in forecasts
+    assert "Invalid v Infinite" not in forecasts
     assert "A v B" in basket and basket.count("A v B") == 1
     assert "C v D" in basket
     assert "E v F" not in basket
+    assert "Invalid v Infinite" not in basket
     assert basket.index("A v B") < basket.index("C v D")
     assert "Competition-scope validation may remain unresolved" in basket
     assert "4.0 winner covers a three-selection basket with profit" in basket

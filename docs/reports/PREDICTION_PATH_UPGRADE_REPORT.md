@@ -79,3 +79,15 @@ On 9,460 out-of-fold fixtures, the floor retained 62.78% and aggregate accepted 
 The current conservative gate remains in place, but it is no longer defensible to treat its prior absolute-ceiling check as proof of stable risk discrimination. No served probability or candidate rule changed. Prediction quality and candidate quality did not improve; applicability evidence became more honest and more reproducible. A genuinely later prospective era is required before changing the threshold or its validation status. Classification remains `RESEARCH_AND_SHADOW`.
 
 Verification: 249 tests passed, Ruff passed, mypy passed for 167 source files, warehouse integrity passed, artifact digests passed, and the persisted acceptance report remains reconciled at 12/12 terminal fixtures, ten predictions, 467 opportunities, 135 research value signals, and zero shadow/production labels.
+
+## Follow-up cycle — temporal confirmation readiness
+
+PXR-007 added a fail-closed, hash-bound audit that must pass before retrospective PXR-006 family-specialist evidence can be called a later temporal confirmation. It compares dataset fixture/timestamp keys, detects removed rows and changed historical targets, and counts only additions strictly after the prior dataset cutoff.
+
+The latest registered candidate dataset contained 22,282 rows versus 22,277 in the PXR-006 baseline. It added five clean fixtures on one date, removed none, changed no overlapping targets, and added nothing inside the already-inspected era. Five rows are below the frozen 100-row readiness floor, so no specialist was fitted or scored and no final-fold evidence was recycled as confirmation.
+
+Prediction quality did not improve and candidate quality did not change. Experiment validity improved because an apparently new dataset can no longer trigger a misleading confirmation rerun merely because its hash changed. PXR-006 remains research-only; no role, calibration, probability scope, prediction, price, opportunity, shortlist rule, or warehouse row changed. Classification remains `RESEARCH_AND_SHADOW`.
+
+The latest report's auxiliary research pipeline was also reconciled. It renders eight finite one-per-fixture Top Forecasts, two finite one-per-fixture Research Basket hypotheses, zero strict Validated Research rows, and zero shadow/production opportunities. The basket's +0.73-unit model expectation is a tracked hypothesis with unresolved competition, margin, uncertainty, and champion evidence—not an execution claim. Both concise selectors now reject non-finite decision values explicitly.
+
+Verification: 260 tests passed, Ruff passed, mypy passed for 171 source files, warehouse integrity passed, the readiness artifact digests reproduced, and the latest persisted report reconciled to 25 expected/terminal fixtures, eight predictions, 330 opportunities, 145 research value signals, and zero shadow/production labels.

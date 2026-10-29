@@ -9,8 +9,19 @@
 ![CLI](https://img.shields.io/badge/Interface-Typer_CLI-0B7285)
 ![Tests](https://img.shields.io/badge/Tests-Offline_by_default-2E8B57)
 ![Execution](https://img.shields.io/badge/Execution-Manual_price_confirmation-C05621)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20Me%20a%20Coffee-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/muyokabi)
 
 <sub>API-Football facts in. Immutable evidence, calibrated probabilities, fair prices, and conditional execution targets out.</sub>
+
+<br><br>
+
+<a href="https://ko-fi.com/muyokabi">
+  <img src="docs/assets/kofi_qr.png" width="130" alt="Ko-fi QR Code (Scan or Click)" title="Scan to buy me a coffee on Ko-fi" />
+</a>
+
+<br>
+
+<sub>☕ <b>Buy me a coffee on <a href="https://ko-fi.com/muyokabi">Ko-fi</a></b> (scan or click)</sub>
 
 </div>
 
